@@ -33,4 +33,4 @@ export interface Budget {
   limit: number;
 }
 
-export type Tab = "dashboard" | "incomes" | "expenses" | "cards" | "goals" | "annual" | "budgets";
+export type Tab = "dashboard" | "incomes" | "expenses" | "cards" | "goals" | "annual" | "budgets" | "tutorial";

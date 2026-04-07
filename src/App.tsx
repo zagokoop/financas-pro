@@ -25,7 +25,11 @@ import {
   BarChart3,
   FileSpreadsheet,
   Percent,
-  History
+  History,
+  BookOpen,
+  Lightbulb,
+  CheckCircle,
+  ArrowRight
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
@@ -514,6 +518,13 @@ export default function App() {
             onClick={() => setActiveTab("annual")} 
             collapsed={!isSidebarOpen}
           />
+          <NavItem 
+            icon={<BookOpen />} 
+            label="Aprenda a Preencher" 
+            active={activeTab === "tutorial"} 
+            onClick={() => setActiveTab("tutorial")} 
+            collapsed={!isSidebarOpen}
+          />
           <div className="pt-4 border-t border-slate-800 mt-4">
             <button 
               onClick={handleLogout}
@@ -564,6 +575,10 @@ export default function App() {
           <Wallet size={20} />
           <span className="text-[10px] mt-1">Orçamentos</span>
         </button>
+        <button onClick={() => setActiveTab("tutorial")} className={cn("flex flex-col items-center p-2 rounded-lg", activeTab === "tutorial" ? "text-emerald-500" : "text-slate-400")}>
+          <BookOpen size={20} />
+          <span className="text-[10px] mt-1">Ajuda</span>
+        </button>
       </nav>
 
       {/* Main Content */}
@@ -580,6 +595,7 @@ export default function App() {
               {activeTab === "cards" && "Cartões de Crédito"}
               {activeTab === "goals" && "Metas Financeiras"}
               {activeTab === "annual" && "Controle Anual"}
+              {activeTab === "tutorial" && "Aprenda a Preencher"}
             </h1>
             <button onClick={handleLogout} className="md:hidden p-2 text-rose-500 hover:bg-rose-50 rounded-lg">
               <X size={20} />
@@ -1452,6 +1468,101 @@ export default function App() {
                 </div>
               </motion.div>
             )}
+            {activeTab === "tutorial" && (
+              <motion.div 
+                key="tutorial"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="max-w-4xl mx-auto space-y-8 pb-20"
+              >
+                <div className="bg-emerald-600 rounded-3xl p-8 md:p-12 text-white shadow-xl shadow-emerald-900/20 relative overflow-hidden">
+                  <div className="relative z-10">
+                    <h2 className="text-3xl md:text-4xl font-bold mb-4">Bem-vindo ao seu Guia Financeiro! 🚀</h2>
+                    <p className="text-emerald-50 text-lg max-w-2xl">
+                      Dominar suas finanças é o primeiro passo para a liberdade. Siga este passo a passo para extrair o máximo do Finanças Pro.
+                    </p>
+                  </div>
+                  <BookOpen className="absolute -right-10 -bottom-10 text-emerald-500/20 w-64 h-64 rotate-12" />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <TutorialStep 
+                    number="01"
+                    title="Registre seus Ganhos"
+                    description="Comece adicionando todas as suas fontes de renda na aba 'Entradas'. Salário, bônus, vendas ou qualquer valor que entre na sua conta."
+                    icon={<TrendingUp className="text-emerald-500" />}
+                  />
+                  <TutorialStep 
+                    number="02"
+                    title="Lance suas Despesas"
+                    description="Na aba 'Despesas', registre seus gastos fixos e variáveis. Não esqueça de marcar como 'Pago' quando liquidar a conta."
+                    icon={<TrendingDown className="text-rose-500" />}
+                  />
+                  <TutorialStep 
+                    number="03"
+                    title="Organize seus Cartões"
+                    description="Crie seções para cada cartão de crédito. Adicione as compras parceladas e o sistema ajudará você a ver o quanto ainda deve em cada um."
+                    icon={<CreditCardIcon className="text-blue-500" />}
+                  />
+                  <TutorialStep 
+                    number="04"
+                    title="Defina suas Metas"
+                    description="Sonha com uma viagem ou reserva de emergência? Crie metas e acompanhe o progresso conforme você poupa dinheiro."
+                    icon={<Target className="text-amber-500" />}
+                  />
+                </div>
+
+                <div className="bg-white rounded-3xl p-8 border border-slate-200 shadow-sm space-y-6">
+                  <h3 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+                    <Lightbulb className="text-amber-500" />
+                    Dicas de Ouro para o Sucesso
+                  </h3>
+                  
+                  <div className="space-y-4">
+                    <div className="flex gap-4">
+                      <div className="w-6 h-6 rounded-full bg-emerald-100 flex items-center justify-center shrink-0 mt-1">
+                        <CheckCircle className="text-emerald-600 w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-slate-800">Consistência é Tudo</h4>
+                        <p className="text-slate-600 text-sm">Tente registrar seus gastos no mesmo dia em que ocorrem. Isso evita que você esqueça valores pequenos que somados fazem diferença.</p>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-4">
+                      <div className="w-6 h-6 rounded-full bg-emerald-100 flex items-center justify-center shrink-0 mt-1">
+                        <CheckCircle className="text-emerald-600 w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-slate-800">Use Categorias Corretamente</h4>
+                        <p className="text-slate-600 text-sm">Categorizar ajuda o Dashboard a mostrar onde você está gastando mais. Se uma categoria não existe, use 'Outros' ou sugira uma nova!</p>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-4">
+                      <div className="w-6 h-6 rounded-full bg-emerald-100 flex items-center justify-center shrink-0 mt-1">
+                        <CheckCircle className="text-emerald-600 w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-slate-800">Acompanhe o Controle Anual</h4>
+                        <p className="text-slate-600 text-sm">Uma vez por mês, visite a aba 'Controle Anual' para ver a evolução do seu patrimônio e se você está gastando menos do que ganha.</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex justify-center pt-4">
+                  <button 
+                    onClick={() => setActiveTab("dashboard")}
+                    className="flex items-center gap-2 px-8 py-4 bg-slate-900 text-white rounded-2xl font-bold hover:bg-slate-800 transition-all shadow-lg shadow-slate-900/20"
+                  >
+                    Ir para o Dashboard
+                    <ArrowRight size={20} />
+                  </button>
+                </div>
+              </motion.div>
+            )}
           </AnimatePresence>
 
           <Modal 
@@ -1567,6 +1678,26 @@ function NavItem({ icon, label, active, onClick, collapsed }: {
       </span>
       {!collapsed && <span className="font-medium">{label}</span>}
     </button>
+  );
+}
+
+function TutorialStep({ number, title, description, icon }: { 
+  number: string, 
+  title: string, 
+  description: string, 
+  icon: React.ReactNode 
+}) {
+  return (
+    <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm hover:shadow-md transition-all group">
+      <div className="flex items-start justify-between mb-4">
+        <div className="w-12 h-12 rounded-2xl bg-slate-50 flex items-center justify-center group-hover:bg-emerald-50 transition-colors">
+          {icon}
+        </div>
+        <span className="text-4xl font-black text-slate-100 group-hover:text-emerald-50 transition-colors">{number}</span>
+      </div>
+      <h4 className="font-bold text-slate-900 mb-2">{title}</h4>
+      <p className="text-slate-500 text-sm leading-relaxed">{description}</p>
+    </div>
   );
 }
 
