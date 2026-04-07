@@ -28,4 +28,9 @@ export interface FinancialGoal {
   deadline: string;
 }
 
-export type Tab = "dashboard" | "incomes" | "expenses" | "cards" | "goals" | "annual";
+export interface Budget {
+  category: Category;
+  limit: number;
+}
+
+export type Tab = "dashboard" | "incomes" | "expenses" | "cards" | "goals" | "annual" | "budgets";

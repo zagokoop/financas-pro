@@ -19,7 +19,13 @@ import {
   X,
   CreditCard as CreditCardIcon,
   CheckCircle2,
-  Circle
+  Circle,
+  Search,
+  Wallet,
+  BarChart3,
+  FileSpreadsheet,
+  Percent,
+  History
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
@@ -74,8 +80,24 @@ export default function App() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [goals, setGoals] = useState<FinancialGoal[]>([]);
   const [cards, setCards] = useState<CreditCard[]>([]);
+  const [cardBanks, setCardBanks] = useState<string[]>([]);
+  const [budgets, setBudgets] = useState<{ [key: string]: number }>({});
+  const [searchTerm, setSearchTerm] = useState("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [loginInput, setLoginInput] = useState("");
+  const [modal, setModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    inputType?: "text" | "number";
+    defaultValue?: string;
+    onConfirm: (value?: string) => void;
+  }>({
+    isOpen: false,
+    title: "",
+    message: "",
+    onConfirm: () => {},
+  });
 
   // Load user data on login
   useEffect(() => {
@@ -86,11 +108,15 @@ export default function App() {
         setTransactions(parsed.transactions || []);
         setGoals(parsed.goals || INITIAL_GOALS);
         setCards(parsed.cards || INITIAL_CARDS);
+        setCardBanks(parsed.cardBanks || Array.from(new Set((parsed.cards || INITIAL_CARDS).map((c: any) => c.bank))));
+        setBudgets(parsed.budgets || {});
       } else {
         // New user gets initial data
         setTransactions(INITIAL_TRANSACTIONS);
         setGoals(INITIAL_GOALS);
         setCards(INITIAL_CARDS);
+        setCardBanks(Array.from(new Set(INITIAL_CARDS.map(c => c.bank))));
+        setBudgets({});
       }
     }
   }, [user]);
@@ -98,10 +124,10 @@ export default function App() {
   // Save user data on changes
   useEffect(() => {
     if (user) {
-      const data = { transactions, goals, cards };
+      const data = { transactions, goals, cards, cardBanks, budgets };
       localStorage.setItem(`financas_pro_data_${user}`, JSON.stringify(data));
     }
-  }, [transactions, goals, cards, user]);
+  }, [transactions, goals, cards, cardBanks, budgets, user]);
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -115,6 +141,33 @@ export default function App() {
     setUser(null);
     localStorage.removeItem("financas_pro_current_user");
     setLoginInput("");
+  };
+
+  const exportToCSV = () => {
+    const headers = ["Data", "Descrição", "Categoria", "Valor", "Tipo", "Status"];
+    const rows = transactions.map(t => [
+      t.date,
+      t.description,
+      t.category,
+      t.amount.toString(),
+      t.type === "income" ? "Receita" : "Despesa",
+      t.paid ? "Pago" : "Pendente"
+    ]);
+
+    const csvContent = [
+      headers.join(","),
+      ...rows.map(r => r.join(","))
+    ].join("\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute("download", `financas_pro_export_${format(new Date(), "yyyy-MM-dd")}.csv`);
+    link.style.visibility = "hidden";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
   const totals = useMemo(() => {
     const filtered = transactions.filter(t => {
@@ -131,8 +184,23 @@ export default function App() {
       .filter(t => t.type === "expense" && t.paid)
       .reduce((acc, t) => acc + t.amount, 0);
     const pendingExpense = expense - paidExpense;
-    return { income, expense, paidExpense, pendingExpense, balance: income - expense };
-  }, [transactions, selectedMonth, selectedYear]);
+    const savingsRate = income > 0 ? ((income - expense) / income) * 100 : 0;
+    
+    const budgetAdherence = Object.keys(budgets).length > 0 
+      ? ((Object.entries(budgets) as [string, number][]).filter(([cat, limit]) => {
+          const spent = transactions
+            .filter(t => t.category === cat && t.type === "expense" && 
+                    parseISO(t.date).getMonth() === selectedMonth && 
+                    parseISO(t.date).getFullYear() === selectedYear)
+            .reduce((acc, t) => acc + t.amount, 0);
+          return spent <= limit;
+        }).length / Object.keys(budgets).length) * 100
+      : 100;
+
+    const healthScore = Math.min(100, Math.max(0, (savingsRate * 0.6) + (budgetAdherence * 0.4)));
+
+    return { income, expense, paidExpense, pendingExpense, balance: income - expense, savingsRate, healthScore };
+  }, [transactions, selectedMonth, selectedYear, budgets]);
 
   // Derived Goals with automatic progress from transactions
   const goalsWithProgress = useMemo(() => {
@@ -151,6 +219,24 @@ export default function App() {
       return { ...card, installmentsPaid: card.installmentsPaid + paidCount };
     });
   }, [cards, transactions]);
+
+  const groupedCards = useMemo(() => {
+    const groups: { [key: string]: typeof cardsWithProgress } = {};
+    
+    // Initialize groups with all banks
+    cardBanks.forEach(bank => {
+      groups[bank] = [];
+    });
+
+    cardsWithProgress.forEach(card => {
+      const bank = card.bank || "Outros";
+      if (!groups[bank]) {
+        groups[bank] = [];
+      }
+      groups[bank].push(card);
+    });
+    return groups;
+  }, [cardsWithProgress, cardBanks]);
 
   // Chart Data
   const categoryData = useMemo(() => {
@@ -207,7 +293,35 @@ export default function App() {
     setTransactions([newTransaction, ...transactions]);
   };
 
-  const addCard = () => {
+  const addBank = () => {
+    setModal({
+      isOpen: true,
+      title: "Novo Cartão",
+      message: "Digite o nome do Banco ou Cartão para criar uma nova seção:",
+      inputType: "text",
+      defaultValue: "",
+      onConfirm: (bank) => {
+        if (bank && !cardBanks.includes(bank)) {
+          setCardBanks(prev => [...prev, bank]);
+        }
+        setModal(prev => ({ ...prev, isOpen: false }));
+      }
+    });
+  };
+
+  const deleteBank = (bank: string) => {
+    setModal({
+      isOpen: true,
+      title: "Remover Seção",
+      message: `Deseja remover a seção do cartão "${bank}"? Isso não apagará as compras já registradas, mas a seção desaparecerá se não houver compras.`,
+      onConfirm: () => {
+        setCardBanks(prev => prev.filter(b => b !== bank));
+        setModal(prev => ({ ...prev, isOpen: false }));
+      }
+    });
+  };
+
+  const addCardPurchase = (bank: string) => {
     const newCard: CreditCard = {
       id: Math.random().toString(36).substr(2, 9),
       description: "Nova Compra",
@@ -215,7 +329,7 @@ export default function App() {
       installmentsPaid: 0,
       totalInstallments: 1,
       dueDate: "10",
-      bank: "Cartão"
+      bank: bank
     };
     setCards([newCard, ...cards]);
   };
@@ -253,28 +367,6 @@ export default function App() {
 
   const deleteGoal = (id: string) => {
     setGoals(prev => prev.filter(g => g.id !== id));
-  };
-
-  const exportToCSV = () => {
-    const headers = ["Data", "Descrição", "Categoria", "Valor", "Tipo"];
-    const rows = transactions.map(t => [
-      t.date,
-      t.description,
-      t.category,
-      t.amount.toString(),
-      t.type === "income" ? "Receita" : "Despesa"
-    ]);
-    
-    const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const link = document.createElement("a");
-    const url = URL.createObjectURL(blob);
-    link.setAttribute("href", url);
-    link.setAttribute("download", `financas_pro_${format(new Date(), "yyyy-MM-dd")}.csv`);
-    link.style.visibility = "hidden";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
   };
 
   const exportBackup = () => {
@@ -409,6 +501,13 @@ export default function App() {
             collapsed={!isSidebarOpen}
           />
           <NavItem 
+            icon={<Wallet />} 
+            label="Orçamentos" 
+            active={activeTab === "budgets"} 
+            onClick={() => setActiveTab("budgets")} 
+            collapsed={!isSidebarOpen}
+          />
+          <NavItem 
             icon={<CalendarDays />} 
             label="Controle Anual" 
             active={activeTab === "annual"} 
@@ -460,6 +559,10 @@ export default function App() {
         <button onClick={() => setActiveTab("goals")} className={cn("flex flex-col items-center p-2 rounded-lg", activeTab === "goals" ? "text-emerald-500" : "text-slate-400")}>
           <Target size={20} />
           <span className="text-[10px] mt-1">Metas</span>
+        </button>
+        <button onClick={() => setActiveTab("budgets")} className={cn("flex flex-col items-center p-2 rounded-lg", activeTab === "budgets" ? "text-emerald-500" : "text-slate-400")}>
+          <Wallet size={20} />
+          <span className="text-[10px] mt-1">Orçamentos</span>
         </button>
       </nav>
 
@@ -527,17 +630,44 @@ export default function App() {
               <Download size={18} />
               <span className="hidden sm:inline">Exportar CSV</span>
             </button>
-            {(activeTab === "incomes" || activeTab === "expenses" || activeTab === "cards") && (
-              <button 
-                onClick={() => {
-                  if (activeTab === "cards") addCard();
-                  else addTransaction(activeTab === "incomes" ? "income" : "expense");
-                }}
-                className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium shadow-sm transition-all"
-              >
-                <Plus size={18} />
-                <span>Novo Registro</span>
-              </button>
+            {(activeTab === "incomes" || activeTab === "expenses" || activeTab === "cards" || activeTab === "budgets") && (
+              <div className="flex items-center gap-2">
+                {(activeTab === "incomes" || activeTab === "expenses") && (
+                  <div className="relative hidden lg:block">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                    <input 
+                      type="text" 
+                      placeholder="Buscar..." 
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 w-48"
+                    />
+                  </div>
+                )}
+                <button 
+                  onClick={() => {
+                    if (activeTab === "cards") addBank();
+                    else if (activeTab === "budgets") {
+                      setModal({
+                        isOpen: true,
+                        title: "Novo Orçamento",
+                        message: "Digite a categoria para o orçamento:",
+                        inputType: "text",
+                        defaultValue: "",
+                        onConfirm: (cat) => {
+                          if (cat) setBudgets(prev => ({ ...prev, [cat]: 0 }));
+                          setModal(prev => ({ ...prev, isOpen: false }));
+                        }
+                      });
+                    }
+                    else addTransaction(activeTab === "incomes" ? "income" : "expense");
+                  }}
+                  className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium shadow-sm transition-all"
+                >
+                  <Plus size={18} />
+                  <span>{activeTab === "cards" ? "Novo Cartão" : "Novo Registro"}</span>
+                </button>
+              </div>
             )}
           </div>
         </header>
@@ -553,7 +683,7 @@ export default function App() {
                 className="space-y-6 md:space-y-8"
               >
                 {/* Summary Cards */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 md:gap-6">
                   <SummaryCard 
                     title={`Receita em ${["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"][selectedMonth]}`} 
                     value={totals.income} 
@@ -584,6 +714,30 @@ export default function App() {
                     icon={<LayoutDashboard className="text-blue-600" />} 
                     color={totals.balance >= 0 ? "blue" : "rose"}
                     showIndicator
+                  />
+                  <SummaryCard 
+                    title="Taxa de Poupança" 
+                    value={totals.savingsRate} 
+                    icon={<Percent className="text-amber-600" />} 
+                    color="amber"
+                    isPercentage
+                    extraInfo={
+                      <div className="text-[10px] md:text-xs text-slate-500">
+                        {totals.savingsRate >= 20 ? "Ótimo desempenho!" : totals.savingsRate > 0 ? "Bom começo!" : "Atenção ao saldo!"}
+                      </div>
+                    }
+                  />
+                  <SummaryCard 
+                    title="Saúde Financeira" 
+                    value={totals.healthScore} 
+                    icon={<BarChart3 className="text-blue-600" />} 
+                    color="blue"
+                    isPercentage
+                    extraInfo={
+                      <div className="text-[10px] md:text-xs text-slate-500">
+                        {totals.healthScore >= 80 ? "Excelente!" : totals.healthScore >= 50 ? "Saudável" : "Precisa de atenção"}
+                      </div>
+                    }
                   />
                 </div>
 
@@ -675,10 +829,13 @@ export default function App() {
                       {transactions
                         .filter(t => {
                           const date = parseISO(t.date);
+                          const matchesSearch = t.description.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                                               t.category.toLowerCase().includes(searchTerm.toLowerCase());
                           return (
                             t.type === (activeTab === "incomes" ? "income" : "expense") &&
                             date.getMonth() === selectedMonth &&
-                            date.getFullYear() === selectedYear
+                            date.getFullYear() === selectedYear &&
+                            matchesSearch
                           );
                         })
                         .map(transaction => (
@@ -742,7 +899,14 @@ export default function App() {
                                   type="number" 
                                   value={transaction.amount}
                                   onChange={(e) => updateTransaction(transaction.id, "amount", parseFloat(e.target.value) || 0)}
-                                  className={`bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-24 font-medium ${transaction.paid ? 'text-slate-400 line-through' : ''}`}
+                                  className={cn(
+                                    "bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-24 font-bold",
+                                    transaction.paid ? "text-slate-400 line-through" : (
+                                      transaction.type === "income" ? "text-emerald-600" : (
+                                        transaction.amount > 1000 ? "text-rose-700 underline decoration-rose-300 underline-offset-4" : "text-rose-600"
+                                      )
+                                    )
+                                  )}
                                 />
                               </div>
                             </td>
@@ -791,162 +955,224 @@ export default function App() {
             {activeTab === "cards" && (
               <motion.div 
                 key="cards"
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-                className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="space-y-8"
               >
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left">
-                    <thead>
-                      <tr className="bg-slate-50 border-b border-slate-200">
-                        <th className="px-6 py-4 font-semibold text-slate-600">Descrição</th>
-                        <th className="px-6 py-4 font-semibold text-slate-600">Banco/Cartão</th>
-                        <th className="px-6 py-4 font-semibold text-slate-600">Vencimento</th>
-                        <th className="px-6 py-4 font-semibold text-slate-600 text-center">Parcelas</th>
-                        <th className="px-6 py-4 font-semibold text-slate-600">Valor Total</th>
-                        <th className="px-6 py-4 font-semibold text-slate-600">Valor Parcela</th>
-                        <th className="px-6 py-4 font-semibold text-slate-600 text-right">Ações</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {cardsWithProgress.map(card => {
-                        const installmentValue = card.totalAmount / card.totalInstallments;
-                        const installmentsLeft = card.totalInstallments - card.installmentsPaid;
-                        return (
-                          <tr key={card.id} className="hover:bg-slate-50 transition-colors">
-                            <td className="px-6 py-4">
-                              <input 
-                                type="text" 
-                                value={card.description}
-                                onChange={(e) => updateCard(card.id, "description", e.target.value)}
-                                className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-full"
-                              />
-                            </td>
-                            <td className="px-6 py-4">
-                              <input 
-                                type="text" 
-                                value={card.bank}
-                                onChange={(e) => updateCard(card.id, "bank", e.target.value)}
-                                className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-full"
-                              />
-                            </td>
-                            <td className="px-6 py-4">
-                              <div className="flex items-center gap-1">
-                                <span className="text-slate-400 text-xs">Dia</span>
-                                <input 
-                                  type="text" 
-                                  value={card.dueDate}
-                                  onChange={(e) => updateCard(card.id, "dueDate", e.target.value)}
-                                  className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-10 text-center"
-                                />
-                              </div>
-                            </td>
-                            <td className="px-6 py-4">
-                              <div className="flex items-center justify-center gap-2">
-                                <input 
-                                  type="number" 
-                                  value={card.installmentsPaid}
-                                  onChange={(e) => updateCard(card.id, "installmentsPaid", parseInt(e.target.value) || 0)}
-                                  className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-12 text-center font-bold text-emerald-600"
-                                />
-                                <span className="text-slate-400">/</span>
-                                <input 
-                                  type="number" 
-                                  value={card.totalInstallments}
-                                  onChange={(e) => updateCard(card.id, "totalInstallments", parseInt(e.target.value) || 1)}
-                                  className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-12 text-center"
-                                />
-                              </div>
-                              <div className="text-[10px] text-center text-slate-400 mt-1">
-                                {installmentsLeft} restantes
-                              </div>
-                            </td>
-                            <td className="px-6 py-4">
-                              <div className="flex items-center gap-1">
-                                <span className="text-slate-400">R$</span>
-                                <input 
-                                  type="number" 
-                                  value={card.totalAmount}
-                                  onChange={(e) => updateCard(card.id, "totalAmount", parseFloat(e.target.value) || 0)}
-                                  className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-24 font-medium"
-                                />
-                              </div>
-                            </td>
-                            <td className="px-6 py-4 font-semibold text-slate-700">
-                              {formatCurrency(installmentValue)}
-                            </td>
-                            <td className="px-6 py-4 text-right">
-                              <div className="flex items-center justify-end gap-2">
-                                <button 
-                                  onClick={() => {
-                                    const dueDate = parseInt(card.dueDate) || 1;
-                                    const installmentsToGenerate = card.totalInstallments - card.installmentsPaid;
-                                    
-                                    if (installmentsToGenerate <= 0) {
-                                      return;
-                                    }
- 
-                                    const newTransactions: Transaction[] = [];
-                                    for (let i = 0; i < installmentsToGenerate; i++) {
-                                      const installmentDate = addMonths(new Date(selectedYear, selectedMonth, dueDate), i);
-                                      newTransactions.push({
-                                        id: Math.random().toString(36).substr(2, 9),
-                                        date: format(installmentDate, "yyyy-MM-dd"),
-                                        description: `Parcela ${card.installmentsPaid + i + 1}/${card.totalInstallments} - ${card.bank}`,
-                                        category: card.bank,
-                                        amount: card.totalAmount / card.totalInstallments,
-                                        type: "expense",
-                                        paid: false
-                                      });
-                                    }
-                                    setTransactions(prev => [...newTransactions, ...prev]);
-                                  }}
-                                  className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-all group/btnAll relative"
-                                  title="Gerar todas as parcelas restantes"
-                                >
-                                  <CalendarDays size={18} />
-                                  <span className="absolute -top-8 right-0 bg-slate-800 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover/btnAll:opacity-100 transition-opacity whitespace-nowrap">
-                                    Gerar Todas
-                                  </span>
-                                </button>
-                                <button 
-                                  onClick={() => {
-                                    const dueDate = parseInt(card.dueDate) || 1;
-                                    const defaultDate = new Date(selectedYear, selectedMonth, dueDate);
-                                    const newTransaction: Transaction = {
-                                      id: Math.random().toString(36).substr(2, 9),
-                                      date: format(defaultDate, "yyyy-MM-dd"),
-                                      description: `Parcela ${card.installmentsPaid + 1}/${card.totalInstallments} - ${card.bank}`,
-                                      category: card.bank,
-                                      amount: card.totalAmount / card.totalInstallments,
-                                      type: "expense",
-                                      paid: true
-                                    };
-                                    setTransactions(prev => [newTransaction, ...prev]);
-                                  }}
-                                  className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all group/btn relative"
-                                  title="Lançar parcela no mês atual"
-                                >
-                                  <Plus size={18} />
-                                  <span className="absolute -top-8 right-0 bg-slate-800 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover/btn:opacity-100 transition-opacity whitespace-nowrap">
-                                    Lançar Parcela
-                                  </span>
-                                </button>
-                                <button 
-                                  onClick={() => deleteCard(card.id)}
-                                  className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
-                                >
-                                  <Trash2 size={18} />
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                {(Object.entries(groupedCards) as [string, typeof cardsWithProgress][]).map(([bank, bankCards]) => {
+                  const bankTotal = bankCards.reduce((acc, c) => acc + c.totalAmount, 0);
+                  const bankPaid = bankCards.reduce((acc, c) => acc + (c.totalAmount * (c.installmentsPaid / c.totalInstallments)), 0);
+                  const bankRemaining = bankTotal - bankPaid;
+
+                  return (
+                    <div key={bank} className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                      <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-slate-900 rounded-xl flex items-center justify-center text-white font-bold">
+                            {bank.charAt(0).toUpperCase()}
+                          </div>
+                          <div>
+                            <h3 className="font-bold text-slate-900 text-lg">{bank}</h3>
+                            <p className="text-xs text-slate-500">{bankCards.length} compras registradas</p>
+                          </div>
+                        </div>
+                        <div className="flex gap-4 md:gap-8">
+                          <div className="text-right">
+                            <p className="text-[10px] uppercase font-bold text-slate-400">Total Devido</p>
+                            <p className="text-sm font-bold text-slate-900">{formatCurrency(bankRemaining)}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-[10px] uppercase font-bold text-slate-400">Total Pago</p>
+                            <p className="text-sm font-bold text-emerald-600">{formatCurrency(bankPaid)}</p>
+                          </div>
+                          <button 
+                            onClick={() => addCardPurchase(bank)}
+                            className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-lg text-xs font-bold hover:bg-slate-800 transition-all"
+                          >
+                            <Plus size={14} />
+                            <span>Nova Compra</span>
+                          </button>
+                          <button 
+                            onClick={() => deleteBank(bank)}
+                            className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                            title="Remover Seção"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </div>
+                      
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left">
+                          <thead>
+                            <tr className="bg-slate-50/50 border-b border-slate-200">
+                              <th className="px-6 py-4 font-semibold text-slate-600">Descrição</th>
+                              <th className="px-6 py-4 font-semibold text-slate-600">Vencimento</th>
+                              <th className="px-6 py-4 font-semibold text-slate-600 text-center">Parcelas</th>
+                              <th className="px-6 py-4 font-semibold text-slate-600">Valor Total</th>
+                              <th className="px-6 py-4 font-semibold text-slate-600">Valor Parcela</th>
+                              <th className="px-6 py-4 font-semibold text-slate-600 text-right">Ações</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {bankCards.map(card => {
+                              const installmentValue = card.totalAmount / card.totalInstallments;
+                              const installmentsLeft = card.totalInstallments - card.installmentsPaid;
+                              return (
+                                <tr key={card.id} className="hover:bg-slate-50 transition-colors">
+                                  <td className="px-6 py-4">
+                                    <input 
+                                      type="text" 
+                                      value={card.description}
+                                      onChange={(e) => updateCard(card.id, "description", e.target.value)}
+                                      className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-full font-medium"
+                                    />
+                                  </td>
+                                  <td className="px-6 py-4">
+                                    <div className="flex items-center gap-1">
+                                      <span className="text-slate-400 text-xs">Dia</span>
+                                      <input 
+                                        type="text" 
+                                        value={card.dueDate}
+                                        onChange={(e) => updateCard(card.id, "dueDate", e.target.value)}
+                                        className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-10 text-center"
+                                      />
+                                    </div>
+                                  </td>
+                                  <td className="px-6 py-4">
+                                    <div className="flex items-center justify-center gap-2">
+                                      <input 
+                                        type="number" 
+                                        value={card.installmentsPaid}
+                                        onChange={(e) => updateCard(card.id, "installmentsPaid", parseInt(e.target.value) || 0)}
+                                        className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-12 text-center font-bold text-emerald-600"
+                                      />
+                                      <span className="text-slate-400">/</span>
+                                      <input 
+                                        type="number" 
+                                        value={card.totalInstallments}
+                                        onChange={(e) => updateCard(card.id, "totalInstallments", parseInt(e.target.value) || 1)}
+                                        className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-12 text-center"
+                                      />
+                                    </div>
+                                    <div className="text-[10px] text-center text-slate-400 mt-1">
+                                      {installmentsLeft} restantes
+                                    </div>
+                                  </td>
+                                  <td className="px-6 py-4">
+                                    <div className="flex items-center gap-1">
+                                      <span className="text-slate-400">R$</span>
+                                      <input 
+                                        type="number" 
+                                        value={card.totalAmount}
+                                        onChange={(e) => updateCard(card.id, "totalAmount", parseFloat(e.target.value) || 0)}
+                                        className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-24 font-medium"
+                                      />
+                                    </div>
+                                  </td>
+                                  <td className="px-6 py-4 font-semibold text-slate-700">
+                                    {formatCurrency(installmentValue)}
+                                  </td>
+                                  <td className="px-6 py-4 text-right">
+                                    <div className="flex items-center justify-end gap-2">
+                                      <button 
+                                        onClick={() => {
+                                          const dueDate = parseInt(card.dueDate) || 1;
+                                          const installmentsToGenerate = card.totalInstallments - card.installmentsPaid;
+                                          
+                                          if (installmentsToGenerate <= 0) {
+                                            return;
+                                          }
+                       
+                                          const newTransactions: Transaction[] = [];
+                                          for (let i = 0; i < installmentsToGenerate; i++) {
+                                            const installmentDate = addMonths(new Date(selectedYear, selectedMonth, dueDate), i);
+                                            newTransactions.push({
+                                              id: Math.random().toString(36).substr(2, 9),
+                                              date: format(installmentDate, "yyyy-MM-dd"),
+                                              description: `Parcela ${card.installmentsPaid + i + 1}/${card.totalInstallments} - ${card.bank}`,
+                                              category: card.bank,
+                                              amount: card.totalAmount / card.totalInstallments,
+                                              type: "expense",
+                                              paid: false
+                                            });
+                                          }
+                                          setTransactions(prev => [...newTransactions, ...prev]);
+                                        }}
+                                        className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-all group/btnAll relative"
+                                        title="Gerar todas as parcelas restantes"
+                                      >
+                                        <CalendarDays size={18} />
+                                        <span className="absolute -top-8 right-0 bg-slate-800 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover/btnAll:opacity-100 transition-opacity whitespace-nowrap">
+                                          Gerar Todas
+                                        </span>
+                                      </button>
+                                      <button 
+                                        onClick={() => {
+                                          const dueDate = parseInt(card.dueDate) || 1;
+                                          const defaultDate = new Date(selectedYear, selectedMonth, dueDate);
+                                          const newTransaction: Transaction = {
+                                            id: Math.random().toString(36).substr(2, 9),
+                                            date: format(defaultDate, "yyyy-MM-dd"),
+                                            description: `Parcela ${card.installmentsPaid + 1}/${card.totalInstallments} - ${card.bank}`,
+                                            category: card.bank,
+                                            amount: card.totalAmount / card.totalInstallments,
+                                            type: "expense",
+                                            paid: true
+                                          };
+                                          setTransactions(prev => [newTransaction, ...prev]);
+                                        }}
+                                        className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all group/btn relative"
+                                        title="Lançar parcela no mês atual"
+                                      >
+                                        <Plus size={18} />
+                                        <span className="absolute -top-8 right-0 bg-slate-800 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover/btn:opacity-100 transition-opacity whitespace-nowrap">
+                                          Lançar Parcela
+                                        </span>
+                                      </button>
+                                      <button 
+                                        onClick={() => deleteCard(card.id)}
+                                        className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                                      >
+                                        <Trash2 size={18} />
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                            {bankCards.length === 0 && (
+                              <tr>
+                                <td colSpan={6} className="px-6 py-10 text-center text-slate-400 italic text-sm">
+                                  Nenhuma compra registrada neste cartão.
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {Object.keys(groupedCards).length === 0 && (
+                  <div className="py-20 text-center space-y-4 bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200">
+                    <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center mx-auto shadow-sm">
+                      <CreditCardIcon className="text-slate-300" size={32} />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-slate-900">Nenhum cartão registrado</h3>
+                      <p className="text-slate-500 text-sm">Adicione seus cartões para começar a organizar suas compras.</p>
+                    </div>
+                    <button 
+                      onClick={addBank}
+                      className="text-emerald-600 font-bold text-sm hover:underline"
+                    >
+                      Adicionar primeiro cartão
+                    </button>
+                  </div>
+                )}
               </motion.div>
             )}
 
@@ -1061,6 +1287,104 @@ export default function App() {
               </motion.div>
             )}
 
+            {activeTab === "budgets" && (
+              <motion.div 
+                key="budgets"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"
+              >
+                {(Object.entries(budgets) as [string, number][]).map(([category, limit]) => {
+                  const spent = transactions
+                    .filter(t => t.category === category && t.type === "expense" && 
+                            parseISO(t.date).getMonth() === selectedMonth && 
+                            parseISO(t.date).getFullYear() === selectedYear)
+                    .reduce((acc, t) => acc + t.amount, 0);
+                  const percentage = limit > 0 ? (spent / limit) * 100 : 0;
+                  const isOver = spent > limit && limit > 0;
+
+                  return (
+                    <div key={category} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <h3 className="font-bold text-slate-900">{category}</h3>
+                          <p className="text-xs text-slate-500">Orçamento Mensal</p>
+                        </div>
+                        <button 
+                          onClick={() => {
+                            const newBudgets = { ...budgets };
+                            delete newBudgets[category];
+                            setBudgets(newBudgets);
+                          }}
+                          className="text-slate-400 hover:text-rose-600 transition-colors"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-sm">
+                          <span className="text-slate-500">Gasto: <span className="font-bold text-slate-900">{formatCurrency(spent)}</span></span>
+                          <span className="text-slate-500">Limite: 
+                            <input 
+                              type="number" 
+                              value={limit}
+                              onChange={(e) => setBudgets(prev => ({ ...prev, [category]: parseFloat(e.target.value) || 0 }))}
+                              className="w-20 ml-1 bg-slate-50 border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 font-bold text-slate-900"
+                            />
+                          </span>
+                        </div>
+                        <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                          <motion.div 
+                            initial={{ width: 0 }}
+                            animate={{ width: `${Math.min(percentage, 100)}%` }}
+                            className={cn(
+                              "h-full transition-all duration-500",
+                              percentage > 90 ? "bg-rose-500" : percentage > 70 ? "bg-amber-500" : "bg-emerald-500"
+                            )}
+                          />
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className={cn(
+                            "text-[10px] font-bold uppercase",
+                            isOver ? "text-rose-600" : "text-slate-400"
+                          )}>
+                            {isOver ? "Limite Excedido!" : `${percentage.toFixed(0)}% utilizado`}
+                          </span>
+                          {limit > 0 && (
+                            <span className="text-[10px] font-bold text-slate-400">
+                              Restam {formatCurrency(Math.max(0, limit - spent))}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                {Object.keys(budgets).length === 0 && (
+                  <div className="col-span-full py-20 text-center space-y-4 bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200">
+                    <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center mx-auto shadow-sm">
+                      <Wallet className="text-slate-300" size={32} />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-slate-900">Nenhum orçamento definido</h3>
+                      <p className="text-slate-500 text-sm">Defina limites de gastos por categoria para ter mais controle.</p>
+                    </div>
+                    <button 
+                      onClick={() => {
+                        const cat = prompt("Digite a categoria para o orçamento:");
+                        if (cat) setBudgets(prev => ({ ...prev, [cat]: 0 }));
+                      }}
+                      className="text-emerald-600 font-bold text-sm hover:underline"
+                    >
+                      Começar agora
+                    </button>
+                  </div>
+                )}
+              </motion.div>
+            )}
+
             {activeTab === "annual" && (
               <motion.div 
                 key="annual"
@@ -1082,7 +1406,10 @@ export default function App() {
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {monthlyData.map((data, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50 transition-colors">
+                        <tr key={idx} className={cn(
+                          "hover:bg-slate-50 transition-colors",
+                          data.saldo < 0 && "bg-rose-50/30"
+                        )}>
                           <td className="px-6 py-4 font-medium">{data.name}</td>
                           <td className="px-6 py-4 text-emerald-600 font-medium">{formatCurrency(data.receita)}</td>
                           <td className="px-6 py-4 text-rose-600 font-medium">{formatCurrency(data.despesa)}</td>
@@ -1126,8 +1453,91 @@ export default function App() {
               </motion.div>
             )}
           </AnimatePresence>
+
+          <Modal 
+            isOpen={modal.isOpen}
+            title={modal.title}
+            message={modal.message}
+            inputType={modal.inputType}
+            defaultValue={modal.defaultValue}
+            onConfirm={modal.onConfirm}
+            onCancel={() => setModal(prev => ({ ...prev, isOpen: false }))}
+          />
         </div>
       </main>
+    </div>
+  );
+}
+
+function Modal({ 
+  isOpen, 
+  title, 
+  message, 
+  inputType, 
+  defaultValue, 
+  onConfirm, 
+  onCancel 
+}: { 
+  isOpen: boolean, 
+  title: string, 
+  message: string, 
+  inputType?: "text" | "number", 
+  defaultValue?: string,
+  onConfirm: (value?: string) => void,
+  onCancel: () => void
+}) {
+  const [inputValue, setInputValue] = useState(defaultValue || "");
+
+  useEffect(() => {
+    setInputValue(defaultValue || "");
+  }, [defaultValue, isOpen]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="bg-white rounded-3xl shadow-xl border border-slate-200 w-full max-w-md overflow-hidden"
+      >
+        <div className="p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xl font-bold text-slate-900">{title}</h3>
+            <button onClick={onCancel} className="p-2 text-slate-400 hover:bg-slate-100 rounded-full transition-all">
+              <X size={20} />
+            </button>
+          </div>
+          <p className="text-slate-600">{message}</p>
+          {inputType && (
+            <input 
+              type={inputType}
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              autoFocus
+              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium"
+              placeholder="Digite aqui..."
+              onKeyDown={(e) => {
+                if (e.key === "Enter") onConfirm(inputValue);
+              }}
+            />
+          )}
+          <div className="flex gap-3 pt-2">
+            <button 
+              onClick={onCancel}
+              className="flex-1 px-4 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold transition-all"
+            >
+              Cancelar
+            </button>
+            <button 
+              onClick={() => onConfirm(inputValue)}
+              className="flex-1 px-4 py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold transition-all"
+            >
+              Confirmar
+            </button>
+          </div>
+        </div>
+      </motion.div>
     </div>
   );
 }
@@ -1160,13 +1570,14 @@ function NavItem({ icon, label, active, onClick, collapsed }: {
   );
 }
 
-function SummaryCard({ title, value, icon, color, showIndicator, extraInfo }: { 
+function SummaryCard({ title, value, icon, color, showIndicator, extraInfo, isPercentage }: { 
   title: string, 
   value: number, 
   icon: React.ReactNode, 
-  color: "emerald" | "rose" | "blue",
+  color: "emerald" | "rose" | "blue" | "amber",
   showIndicator?: boolean,
-  extraInfo?: React.ReactNode
+  extraInfo?: React.ReactNode,
+  isPercentage?: boolean
 }) {
   const isPositive = value >= 0;
   
@@ -1175,7 +1586,9 @@ function SummaryCard({ title, value, icon, color, showIndicator, extraInfo }: {
       <div className="flex items-start justify-between">
         <div>
           <p className="text-slate-500 text-[10px] md:text-sm font-medium mb-1">{title}</p>
-          <h2 className="text-lg md:text-2xl font-bold text-slate-900">{formatCurrency(value)}</h2>
+          <h2 className="text-lg md:text-2xl font-bold text-slate-900">
+            {isPercentage ? `${value.toFixed(1)}%` : formatCurrency(value)}
+          </h2>
           {showIndicator && (
             <div className={cn(
               "mt-1 md:mt-2 flex items-center gap-1 text-[10px] md:text-xs font-bold",
@@ -1190,7 +1603,8 @@ function SummaryCard({ title, value, icon, color, showIndicator, extraInfo }: {
           "p-2 md:p-3 rounded-xl",
           color === "emerald" && "bg-emerald-50",
           color === "rose" && "bg-rose-50",
-          color === "blue" && "bg-blue-50"
+          color === "blue" && "bg-blue-50",
+          color === "amber" && "bg-amber-50"
         )}>
           {icon}
         </div>
