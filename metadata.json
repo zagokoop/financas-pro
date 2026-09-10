@@ -1,5 +1,6 @@
 {
   "name": "Finanças Pro",
-  "description": "Planilha financeira profissional e automatizada com dashboard interativo, controle de entradas/saídas e metas financeiras.",
-  "requestFramePermissions": []
+  "description": "Planilha financeira profissional e automatizada com dashboard interativo, controle de entradas/saídas, cartões, empréstimos e metas financeiras.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -33,4 +33,21 @@ export interface Budget {
   limit: number;
 }
 
-export type Tab = "dashboard" | "incomes" | "expenses" | "cards" | "goals" | "annual" | "budgets" | "tutorial";
+export interface Loan {
+  id: string;
+  description: string;
+  totalAmount: number;
+  installmentsPaid: number;
+  totalInstallments: number;
+  dueDate: string;
+  lender: string;
+}
+
+export interface UserAccount {
+  username: string;
+  name: string;
+  password: string;
+  createdAt: string;
+}
+
+export type Tab = "dashboard" | "incomes" | "expenses" | "cards" | "loans" | "goals" | "annual" | "budgets" | "tutorial";

@@ -22,6 +22,7 @@ import {
   Circle,
   Search,
   Wallet,
+  HandCoins,
   BarChart3,
   FileSpreadsheet,
   Percent,
@@ -29,7 +30,16 @@ import {
   BookOpen,
   Lightbulb,
   CheckCircle,
-  ArrowRight
+  ArrowRight,
+  User,
+  Lock,
+  Eye,
+  EyeOff,
+  UserPlus,
+  LogIn,
+  AlertCircle,
+  ShieldCheck,
+  LogOut
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
@@ -48,7 +58,7 @@ import {
 } from "recharts";
 
 import { cn, formatCurrency } from "@/src/lib/utils";
-import { Transaction, FinancialGoal, Tab, Category, CreditCard } from "@/src/types";
+import { Transaction, FinancialGoal, Tab, Category, CreditCard, Loan, UserAccount } from "@/src/types";
 
 // Mock Initial Data
 const INITIAL_TRANSACTIONS: Transaction[] = [
@@ -85,10 +95,48 @@ export default function App() {
   const [goals, setGoals] = useState<FinancialGoal[]>([]);
   const [cards, setCards] = useState<CreditCard[]>([]);
   const [cardBanks, setCardBanks] = useState<string[]>([]);
+  const [loans, setLoans] = useState<Loan[]>([]);
+  const [loanLenders, setLoanLenders] = useState<string[]>([]);
   const [budgets, setBudgets] = useState<{ [key: string]: number }>({});
   const [searchTerm, setSearchTerm] = useState("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [loginInput, setLoginInput] = useState("");
+  // User accounts list
+  const [accounts, setAccounts] = useState<Record<string, UserAccount>>(() => {
+    try {
+      const saved = localStorage.getItem("financas_pro_users");
+      if (saved) return JSON.parse(saved);
+      // If legacy user exists in current_user, initialize an account for them
+      const legacyUser = localStorage.getItem("financas_pro_current_user");
+      if (legacyUser) {
+        const initialAcc: Record<string, UserAccount> = {
+          [legacyUser.toLowerCase()]: {
+            username: legacyUser.toLowerCase(),
+            name: legacyUser,
+            password: "",
+            createdAt: new Date().toISOString()
+          }
+        };
+        localStorage.setItem("financas_pro_users", JSON.stringify(initialAcc));
+        return initialAcc;
+      }
+      return {};
+    } catch {
+      return {};
+    }
+  });
+
+  // Auth form states
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [authName, setAuthName] = useState("");
+  const [authUsername, setAuthUsername] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authConfirmPassword, setAuthConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authSuccess, setAuthSuccess] = useState<string | null>(null);
+
+  const currentUserAccount = user ? accounts[user.toLowerCase()] : null;
+  const displayName = currentUserAccount?.name || user || "Usuário";
   const [modal, setModal] = useState<{
     isOpen: boolean;
     title: string;
@@ -113,6 +161,8 @@ export default function App() {
         setGoals(parsed.goals || INITIAL_GOALS);
         setCards(parsed.cards || INITIAL_CARDS);
         setCardBanks(parsed.cardBanks || Array.from(new Set((parsed.cards || INITIAL_CARDS).map((c: any) => c.bank))));
+        setLoans(parsed.loans || []);
+        setLoanLenders(parsed.loanLenders || Array.from(new Set((parsed.loans || []).map((l: any) => l.lender))));
         setBudgets(parsed.budgets || {});
       } else {
         // New user gets initial data
@@ -120,6 +170,8 @@ export default function App() {
         setGoals(INITIAL_GOALS);
         setCards(INITIAL_CARDS);
         setCardBanks(Array.from(new Set(INITIAL_CARDS.map(c => c.bank))));
+        setLoans([]);
+        setLoanLenders([]);
         setBudgets({});
       }
     }
@@ -128,23 +180,185 @@ export default function App() {
   // Save user data on changes
   useEffect(() => {
     if (user) {
-      const data = { transactions, goals, cards, cardBanks, budgets };
+      const data = { transactions, goals, cards, cardBanks, loans, loanLenders, budgets };
       localStorage.setItem(`financas_pro_data_${user}`, JSON.stringify(data));
     }
-  }, [transactions, goals, cards, cardBanks, budgets, user]);
+  }, [transactions, goals, cards, cardBanks, loans, loanLenders, budgets, user]);
+
+  const handleRegister = (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+    setAuthSuccess(null);
+
+    const cleanUsername = authUsername.trim().toLowerCase().replace(/\s+/g, "_");
+    const cleanName = authName.trim();
+    const cleanPassword = authPassword;
+
+    if (!cleanName) {
+      setAuthError("Por favor, preencha o seu nome completo ou como deseja ser chamado.");
+      return;
+    }
+
+    if (!cleanUsername || cleanUsername.length < 3) {
+      setAuthError("O nome de usuário deve conter pelo menos 3 caracteres.");
+      return;
+    }
+
+    if (!cleanPassword || cleanPassword.length < 4) {
+      setAuthError("A senha deve conter no mínimo 4 caracteres.");
+      return;
+    }
+
+    if (cleanPassword !== authConfirmPassword) {
+      setAuthError("As senhas digitadas não coincidem. Por favor, verifique.");
+      return;
+    }
+
+    if (accounts[cleanUsername]) {
+      setAuthError("Este nome de usuário já está em uso. Escolha outro ou faça login.");
+      return;
+    }
+
+    const newAccount: UserAccount = {
+      username: cleanUsername,
+      name: cleanName,
+      password: cleanPassword,
+      createdAt: new Date().toISOString()
+    };
+
+    const updated = {
+      ...accounts,
+      [cleanUsername]: newAccount
+    };
+
+    setAccounts(updated);
+    localStorage.setItem("financas_pro_users", JSON.stringify(updated));
+
+    // Initialize user profile data if it didn't exist
+    const existingData = localStorage.getItem(`financas_pro_data_${cleanUsername}`);
+    if (!existingData) {
+      const initialData = {
+        transactions: INITIAL_TRANSACTIONS,
+        goals: INITIAL_GOALS,
+        cards: INITIAL_CARDS,
+        cardBanks: Array.from(new Set(INITIAL_CARDS.map(c => c.bank))),
+        loans: [],
+        loanLenders: [],
+        budgets: {}
+      };
+      localStorage.setItem(`financas_pro_data_${cleanUsername}`, JSON.stringify(initialData));
+    }
+
+    // Set active user
+    setUser(cleanUsername);
+    localStorage.setItem("financas_pro_current_user", cleanUsername);
+
+    // Clear form
+    setAuthName("");
+    setAuthUsername("");
+    setAuthPassword("");
+    setAuthConfirmPassword("");
+  };
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (loginInput.trim()) {
-      setUser(loginInput.trim());
-      localStorage.setItem("financas_pro_current_user", loginInput.trim());
+    setAuthError(null);
+    setAuthSuccess(null);
+
+    const cleanUsername = authUsername.trim().toLowerCase().replace(/\s+/g, "_");
+    const cleanPassword = authPassword;
+
+    if (!cleanUsername) {
+      setAuthError("Por favor, informe seu nome de usuário.");
+      return;
     }
+
+    if (!cleanPassword) {
+      setAuthError("Por favor, digite a sua senha.");
+      return;
+    }
+
+    const account = accounts[cleanUsername];
+
+    // Check if account exists in registered accounts
+    if (account) {
+      if (account.password && account.password !== cleanPassword) {
+        setAuthError("Senha incorreta. Verifique e tente novamente.");
+        return;
+      }
+
+      // If it was a legacy account without password, set the password now
+      if (!account.password) {
+        account.password = cleanPassword;
+        const updated = { ...accounts, [cleanUsername]: account };
+        setAccounts(updated);
+        localStorage.setItem("financas_pro_users", JSON.stringify(updated));
+      }
+
+      setUser(account.username);
+      localStorage.setItem("financas_pro_current_user", account.username);
+      setAuthPassword("");
+      return;
+    }
+
+    // Check if legacy financial data exists in local storage
+    const legacyData = localStorage.getItem(`financas_pro_data_${cleanUsername}`);
+    if (legacyData) {
+      const migratedAccount: UserAccount = {
+        username: cleanUsername,
+        name: cleanUsername,
+        password: cleanPassword,
+        createdAt: new Date().toISOString()
+      };
+      const updated = { ...accounts, [cleanUsername]: migratedAccount };
+      setAccounts(updated);
+      localStorage.setItem("financas_pro_users", JSON.stringify(updated));
+      setUser(cleanUsername);
+      localStorage.setItem("financas_pro_current_user", cleanUsername);
+      setAuthPassword("");
+      return;
+    }
+
+    setAuthError("Perfil não encontrado. Verifique o usuário ou clique na aba 'Criar Perfil'.");
   };
 
   const handleLogout = () => {
     setUser(null);
     localStorage.removeItem("financas_pro_current_user");
-    setLoginInput("");
+    setAuthPassword("");
+    setAuthConfirmPassword("");
+    setAuthError(null);
+    setAuthSuccess(null);
+  };
+
+  const selectSavedAccount = (acc: UserAccount) => {
+    setAuthUsername(acc.username);
+    setAuthMode("login");
+    setAuthError(null);
+    setAuthSuccess(null);
+  };
+
+  const handleDeleteSavedProfile = (usernameToDelete: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const acc = accounts[usernameToDelete];
+    const profileLabel = acc?.name ? `${acc.name} (@${usernameToDelete})` : `@${usernameToDelete}`;
+
+    setModal({
+      isOpen: true,
+      title: "Remover Perfil deste Navegador",
+      message: `Tem certeza que deseja remover o perfil "${profileLabel}" deste dispositivo? Os dados salvos localmente serão apagados.`,
+      onConfirm: () => {
+        const nextAccounts = { ...accounts };
+        delete nextAccounts[usernameToDelete];
+        setAccounts(nextAccounts);
+        localStorage.setItem("financas_pro_users", JSON.stringify(nextAccounts));
+        localStorage.removeItem(`financas_pro_data_${usernameToDelete}`);
+        if (authUsername === usernameToDelete) {
+          setAuthUsername("");
+        }
+        setModal(prev => ({ ...prev, isOpen: false }));
+      }
+    });
   };
 
   const exportToCSV = () => {
@@ -241,6 +455,19 @@ export default function App() {
     });
     return groups;
   }, [cardsWithProgress, cardBanks]);
+
+  const groupedLoans = useMemo(() => {
+    const groups: { [key: string]: Loan[] } = {};
+    loanLenders.forEach(lender => {
+      groups[lender] = [];
+    });
+    loans.forEach(loan => {
+      const lender = loan.lender || "Outros";
+      if (!groups[lender]) groups[lender] = [];
+      groups[lender].push(loan);
+    });
+    return groups;
+  }, [loans, loanLenders]);
 
   // Chart Data
   const categoryData = useMemo(() => {
@@ -354,6 +581,55 @@ export default function App() {
     setCards(prev => prev.filter(c => c.id !== id));
   };
 
+  const addLender = () => {
+    setModal({
+      isOpen: true,
+      title: "Novo Empréstimo",
+      message: "Digite o nome da Instituição ou Pessoa que concedeu o empréstimo:",
+      inputType: "text",
+      defaultValue: "",
+      onConfirm: (lender) => {
+        if (lender && !loanLenders.includes(lender)) {
+          setLoanLenders(prev => [...prev, lender]);
+        }
+        setModal(prev => ({ ...prev, isOpen: false }));
+      }
+    });
+  };
+
+  const deleteLender = (lender: string) => {
+    setModal({
+      isOpen: true,
+      title: "Remover Instituição",
+      message: `Deseja remover a seção de empréstimos de "${lender}"? Isso não apagará os empréstimos já registrados, mas a seção desaparecerá se não houver registros.`,
+      onConfirm: () => {
+        setLoanLenders(prev => prev.filter(l => l !== lender));
+        setModal(prev => ({ ...prev, isOpen: false }));
+      }
+    });
+  };
+
+  const addLoan = (lender: string) => {
+    const newLoan: Loan = {
+      id: Math.random().toString(36).substr(2, 9),
+      description: "Novo Empréstimo",
+      totalAmount: 0,
+      installmentsPaid: 0,
+      totalInstallments: 1,
+      dueDate: "10",
+      lender: lender
+    };
+    setLoans([newLoan, ...loans]);
+  };
+
+  const updateLoan = (id: string, field: keyof Loan, value: any) => {
+    setLoans(prev => prev.map(l => l.id === id ? { ...l, [field]: value } : l));
+  };
+
+  const deleteLoan = (id: string) => {
+    setLoans(prev => prev.filter(l => l.id !== id));
+  };
+
   const addGoal = () => {
     const newGoal: FinancialGoal = {
       id: Math.random().toString(36).substr(2, 9),
@@ -411,43 +687,326 @@ export default function App() {
   };
 
   if (!user) {
+    const savedAccountList: UserAccount[] = Object.values(accounts);
+
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6 font-sans">
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 sm:p-6 font-sans relative overflow-hidden">
+        {/* Subtle decorative lighting */}
+        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute bottom-10 right-10 w-80 h-80 bg-blue-500/5 rounded-full blur-3xl pointer-events-none" />
+
         <motion.div 
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="bg-white p-6 md:p-10 rounded-2xl md:rounded-3xl shadow-2xl w-full max-w-md space-y-6 md:space-y-8"
+          initial={{ opacity: 0, scale: 0.95, y: 15 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          transition={{ duration: 0.25 }}
+          className="bg-white rounded-3xl shadow-2xl w-full max-w-md border border-slate-100 overflow-hidden relative z-10"
         >
-          <div className="text-center space-y-2">
-            <div className="w-12 h-12 md:w-16 md:h-16 bg-emerald-500 rounded-xl md:rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-emerald-500/20">
-              <TrendingUp className="text-white w-8 h-8 md:w-10 md:h-10" />
+          {/* Card Top / Brand */}
+          <div className="pt-8 pb-4 px-6 md:px-8 text-center space-y-2">
+            <div className="w-14 h-14 bg-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-lg shadow-emerald-600/25">
+              <TrendingUp className="text-white w-8 h-8" />
             </div>
-            <h1 className="text-2xl md:text-3xl font-black text-slate-900 tracking-tight">Finanças Pro</h1>
-            <p className="text-sm md:text-base text-slate-500">Acesse sua planilha financeira pessoal</p>
+            <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">Finanças Pro</h1>
+            <p className="text-sm text-slate-500">
+              {authMode === "login" 
+                ? "Acesse sua conta com seu usuário e senha" 
+                : "Crie seu perfil com nome e senha para começar"}
+            </p>
           </div>
 
-          <form onSubmit={handleLogin} className="space-y-6">
-            <div className="space-y-2">
-              <label className="text-sm font-bold text-slate-700 ml-1">Seu Nome ou Usuário</label>
-              <input 
-                type="text" 
-                required
-                value={loginInput}
-                onChange={(e) => setLoginInput(e.target.value)}
-                placeholder="Ex: joao_finance"
-                className="w-full px-5 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-emerald-500 focus:ring-0 transition-all outline-none font-medium"
-              />
+          {/* Mode Switcher Tabs */}
+          <div className="px-6 md:px-8">
+            <div className="bg-slate-100 p-1 rounded-2xl flex gap-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthMode("login");
+                  setAuthError(null);
+                  setAuthSuccess(null);
+                }}
+                className={cn(
+                  "flex-1 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all",
+                  authMode === "login"
+                    ? "bg-white text-slate-900 shadow-sm"
+                    : "text-slate-500 hover:text-slate-900"
+                )}
+              >
+                <LogIn size={16} />
+                <span>Entrar</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthMode("register");
+                  setAuthError(null);
+                  setAuthSuccess(null);
+                }}
+                className={cn(
+                  "flex-1 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all",
+                  authMode === "register"
+                    ? "bg-white text-slate-900 shadow-sm"
+                    : "text-slate-500 hover:text-slate-900"
+                )}
+              >
+                <UserPlus size={16} />
+                <span>Criar Perfil</span>
+              </button>
             </div>
-            <button 
-              type="submit"
-              className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-bold text-lg shadow-lg shadow-emerald-600/20 transition-all active:scale-95"
-            >
-              Entrar na Planilha
-            </button>
-          </form>
+          </div>
 
-          <div className="pt-6 text-center border-t border-slate-100">
-            <p className="text-xs text-slate-400 uppercase tracking-widest font-bold">Produto Digital Premium</p>
+          {/* Form Content */}
+          <div className="p-6 md:p-8 pt-6 space-y-5">
+            {authError && (
+              <motion.div 
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="flex items-start gap-2.5 p-3.5 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs leading-relaxed font-medium"
+              >
+                <AlertCircle size={16} className="shrink-0 mt-0.5 text-rose-600" />
+                <span>{authError}</span>
+              </motion.div>
+            )}
+
+            {authSuccess && (
+              <motion.div 
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="flex items-start gap-2.5 p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-xl text-xs leading-relaxed font-medium"
+              >
+                <CheckCircle2 size={16} className="shrink-0 mt-0.5 text-emerald-600" />
+                <span>{authSuccess}</span>
+              </motion.div>
+            )}
+
+            {authMode === "register" ? (
+              <form onSubmit={handleRegister} className="space-y-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-700 ml-1 flex items-center gap-1.5">
+                    <User size={14} className="text-slate-400" />
+                    <span>Nome Completo</span>
+                  </label>
+                  <input 
+                    type="text" 
+                    required
+                    value={authName}
+                    onChange={(e) => setAuthName(e.target.value)}
+                    placeholder="Ex: Guilherme Koop"
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-all outline-none font-medium text-sm text-slate-900 placeholder:text-slate-400"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-700 ml-1 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <span className="text-slate-400 font-mono text-xs">@</span>
+                      <span>Nome de Usuário (para login)</span>
+                    </span>
+                    <span className="text-[10px] font-normal text-slate-400">Sem espaços</span>
+                  </label>
+                  <input 
+                    type="text" 
+                    required
+                    value={authUsername}
+                    onChange={(e) => setAuthUsername(e.target.value.toLowerCase().replace(/\s+/g, "_"))}
+                    placeholder="Ex: guilherme"
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-all outline-none font-medium text-sm text-slate-900 placeholder:text-slate-400 font-mono"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between ml-1">
+                    <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                      <Lock size={14} className="text-slate-400" />
+                      <span>Senha</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="text-[11px] text-slate-400 hover:text-slate-700 flex items-center gap-1"
+                    >
+                      {showPassword ? <EyeOff size={13} /> : <Eye size={13} />}
+                      <span>{showPassword ? "Ocultar" : "Mostrar"}</span>
+                    </button>
+                  </div>
+                  <input 
+                    type={showPassword ? "text" : "password"} 
+                    required
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    placeholder="Mínimo 4 caracteres"
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-all outline-none font-medium text-sm text-slate-900 placeholder:text-slate-400"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-700 ml-1 flex items-center gap-1.5">
+                    <ShieldCheck size={14} className="text-slate-400" />
+                    <span>Confirmar Senha</span>
+                  </label>
+                  <input 
+                    type={showPassword ? "text" : "password"} 
+                    required
+                    value={authConfirmPassword}
+                    onChange={(e) => setAuthConfirmPassword(e.target.value)}
+                    placeholder="Digite a mesma senha"
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-all outline-none font-medium text-sm text-slate-900 placeholder:text-slate-400"
+                  />
+                </div>
+
+                <div className="p-3 bg-emerald-50/70 border border-emerald-100 rounded-xl text-[11px] text-emerald-800 leading-relaxed flex items-start gap-2">
+                  <ShieldCheck size={16} className="text-emerald-600 shrink-0 mt-0.5" />
+                  <span>
+                    Todas as informações da sua planilha ficam salvas individualmente para cada usuário criado.
+                  </span>
+                </div>
+
+                <button 
+                  type="submit"
+                  className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-sm shadow-md shadow-emerald-600/20 transition-all active:scale-[0.99] flex items-center justify-center gap-2 mt-2"
+                >
+                  <UserPlus size={18} />
+                  <span>Criar Perfil e Entrar</span>
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={handleLogin} className="space-y-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-700 ml-1 flex items-center gap-1.5">
+                    <User size={14} className="text-slate-400" />
+                    <span>Nome de Usuário</span>
+                  </label>
+                  <input 
+                    type="text" 
+                    required
+                    value={authUsername}
+                    onChange={(e) => setAuthUsername(e.target.value.toLowerCase().replace(/\s+/g, "_"))}
+                    placeholder="Ex: guilherme"
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-all outline-none font-medium text-sm text-slate-900 placeholder:text-slate-400 font-mono"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between ml-1">
+                    <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                      <Lock size={14} className="text-slate-400" />
+                      <span>Senha de Acesso</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="text-[11px] text-slate-400 hover:text-slate-700 flex items-center gap-1"
+                    >
+                      {showPassword ? <EyeOff size={13} /> : <Eye size={13} />}
+                      <span>{showPassword ? "Ocultar" : "Mostrar"}</span>
+                    </button>
+                  </div>
+                  <input 
+                    type={showPassword ? "text" : "password"} 
+                    required
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    placeholder="Sua senha cadastrada"
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 transition-all outline-none font-medium text-sm text-slate-900 placeholder:text-slate-400"
+                  />
+                </div>
+
+                <button 
+                  type="submit"
+                  className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-sm shadow-md shadow-emerald-600/20 transition-all active:scale-[0.99] flex items-center justify-center gap-2 mt-2"
+                >
+                  <LogIn size={18} />
+                  <span>Entrar na Planilha</span>
+                </button>
+              </form>
+            )}
+
+            {/* Switch mode prompt */}
+            <div className="text-center pt-2">
+              {authMode === "login" ? (
+                <p className="text-xs text-slate-500">
+                  Ainda não tem um perfil?{" "}
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      setAuthMode("register");
+                      setAuthError(null);
+                      setAuthSuccess(null);
+                    }}
+                    className="text-emerald-600 font-bold hover:underline"
+                  >
+                    Criar perfil agora
+                  </button>
+                </p>
+              ) : (
+                <p className="text-xs text-slate-500">
+                  Já possui conta cadastrada?{" "}
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      setAuthMode("login");
+                      setAuthError(null);
+                      setAuthSuccess(null);
+                    }}
+                    className="text-emerald-600 font-bold hover:underline"
+                  >
+                    Fazer login
+                  </button>
+                </p>
+              )}
+            </div>
+
+            {/* Saved Accounts on this Device */}
+            {savedAccountList.length > 0 && (
+              <div className="pt-4 border-t border-slate-100 space-y-2.5">
+                <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                  Perfis salvos neste dispositivo:
+                </p>
+                <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                  {savedAccountList.map((acc) => (
+                    <div 
+                      key={acc.username}
+                      onClick={() => selectSavedAccount(acc)}
+                      className={cn(
+                        "w-full flex items-center justify-between p-2.5 rounded-xl border transition-all cursor-pointer text-left group",
+                        authUsername === acc.username && authMode === "login"
+                          ? "bg-emerald-50 border-emerald-300"
+                          : "bg-slate-50 border-slate-100 hover:bg-slate-100 hover:border-slate-200"
+                      )}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-8 h-8 rounded-lg bg-slate-900 text-white flex items-center justify-center font-bold text-xs shrink-0">
+                          {acc.name ? acc.name.charAt(0).toUpperCase() : acc.username.charAt(0).toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-slate-800 truncate">{acc.name || acc.username}</p>
+                          <p className="text-[10px] text-slate-400 truncate font-mono">@{acc.username}</p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1 shrink-0">
+                        <span className="text-[10px] font-bold text-emerald-600 bg-emerald-100/60 px-2 py-0.5 rounded-md opacity-0 group-hover:opacity-100 transition-opacity">
+                          Acessar
+                        </span>
+                        <button
+                          type="button"
+                          onClick={(e) => handleDeleteSavedProfile(acc.username, e)}
+                          title="Remover perfil deste dispositivo"
+                          className="p-1.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="py-3 bg-slate-50 text-center border-t border-slate-100">
+            <p className="text-[10px] text-slate-400 tracking-wider font-semibold">
+              PRODUTO DIGITAL PREMIUM • DADOS ISOLADOS POR USUÁRIO
+            </p>
           </div>
         </motion.div>
       </div>
@@ -498,6 +1057,13 @@ export default function App() {
             collapsed={!isSidebarOpen}
           />
           <NavItem 
+            icon={<HandCoins />} 
+            label="Empréstimos" 
+            active={activeTab === "loans"} 
+            onClick={() => setActiveTab("loans")} 
+            collapsed={!isSidebarOpen}
+          />
+          <NavItem 
             icon={<Target />} 
             label="Metas" 
             active={activeTab === "goals"} 
@@ -525,16 +1091,33 @@ export default function App() {
             onClick={() => setActiveTab("tutorial")} 
             collapsed={!isSidebarOpen}
           />
-          <div className="pt-4 border-t border-slate-800 mt-4">
+          <div className="pt-4 border-t border-slate-800 mt-4 space-y-2">
+            {/* User profile card in sidebar */}
+            <div className={cn(
+              "flex items-center gap-2.5 p-2 rounded-xl bg-slate-800/80 border border-slate-700/60",
+              !isSidebarOpen && "justify-center"
+            )}>
+              <div className="w-8 h-8 rounded-lg bg-emerald-500 text-slate-950 flex items-center justify-center font-black text-xs shrink-0 shadow-sm">
+                {displayName.charAt(0).toUpperCase()}
+              </div>
+              {isSidebarOpen && (
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-bold text-white truncate leading-tight">{displayName}</p>
+                  <p className="text-[10px] text-emerald-400 truncate leading-tight font-mono">@{user}</p>
+                </div>
+              )}
+            </div>
+
             <button 
               onClick={handleLogout}
               className={cn(
-                "w-full flex items-center gap-3 p-3 rounded-xl text-rose-400 hover:bg-rose-500/10 hover:text-rose-300 transition-all",
+                "w-full flex items-center gap-2.5 p-2 rounded-xl text-rose-400 hover:bg-rose-500/10 hover:text-rose-300 transition-all text-xs font-semibold",
                 !isSidebarOpen && "justify-center"
               )}
+              title="Trocar Perfil / Sair"
             >
-              <X size={20} />
-              {isSidebarOpen && <span className="font-medium">Sair da Conta</span>}
+              <LogOut size={16} />
+              {isSidebarOpen && <span>Trocar Perfil / Sair</span>}
             </button>
           </div>
         </nav>
@@ -567,6 +1150,10 @@ export default function App() {
           <CreditCardIcon size={20} />
           <span className="text-[10px] mt-1">Cartões</span>
         </button>
+        <button onClick={() => setActiveTab("loans")} className={cn("flex flex-col items-center p-2 rounded-lg", activeTab === "loans" ? "text-emerald-500" : "text-slate-400")}>
+          <HandCoins size={20} />
+          <span className="text-[10px] mt-1">Emprést.</span>
+        </button>
         <button onClick={() => setActiveTab("goals")} className={cn("flex flex-col items-center p-2 rounded-lg", activeTab === "goals" ? "text-emerald-500" : "text-slate-400")}>
           <Target size={20} />
           <span className="text-[10px] mt-1">Metas</span>
@@ -593,13 +1180,24 @@ export default function App() {
               {activeTab === "incomes" && "Controle de Entradas"}
               {activeTab === "expenses" && "Controle de Despesas"}
               {activeTab === "cards" && "Cartões de Crédito"}
+              {activeTab === "loans" && "Empréstimos"}
               {activeTab === "goals" && "Metas Financeiras"}
               {activeTab === "annual" && "Controle Anual"}
               {activeTab === "tutorial" && "Aprenda a Preencher"}
             </h1>
-            <button onClick={handleLogout} className="md:hidden p-2 text-rose-500 hover:bg-rose-50 rounded-lg">
-              <X size={20} />
-            </button>
+            <div className="flex items-center gap-2 md:hidden">
+              <div className="flex items-center gap-1.5 px-2 py-1 bg-slate-100 rounded-lg text-xs font-semibold text-slate-700 max-w-[130px]">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0"></span>
+                <span className="truncate">{displayName}</span>
+              </div>
+              <button 
+                onClick={handleLogout} 
+                title="Trocar Perfil / Sair"
+                className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg"
+              >
+                <LogOut size={18} />
+              </button>
+            </div>
           </div>
           <div className="flex flex-wrap gap-2 w-full sm:w-auto">
             {(activeTab === "dashboard" || activeTab === "incomes" || activeTab === "expenses" || activeTab === "annual") && (
@@ -646,7 +1244,7 @@ export default function App() {
               <Download size={18} />
               <span className="hidden sm:inline">Exportar CSV</span>
             </button>
-            {(activeTab === "incomes" || activeTab === "expenses" || activeTab === "cards" || activeTab === "budgets") && (
+            {(activeTab === "incomes" || activeTab === "expenses" || activeTab === "cards" || activeTab === "loans" || activeTab === "budgets") && (
               <div className="flex items-center gap-2">
                 {(activeTab === "incomes" || activeTab === "expenses") && (
                   <div className="relative hidden lg:block">
@@ -663,6 +1261,7 @@ export default function App() {
                 <button 
                   onClick={() => {
                     if (activeTab === "cards") addBank();
+                    else if (activeTab === "loans") addLender();
                     else if (activeTab === "budgets") {
                       setModal({
                         isOpen: true,
@@ -681,10 +1280,30 @@ export default function App() {
                   className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium shadow-sm transition-all"
                 >
                   <Plus size={18} />
-                  <span>{activeTab === "cards" ? "Novo Cartão" : "Novo Registro"}</span>
+                  <span>{activeTab === "cards" ? "Novo Cartão" : activeTab === "loans" ? "Novo Empréstimo" : "Novo Registro"}</span>
                 </button>
               </div>
             )}
+
+            {/* Desktop User Profile Badge */}
+            <div className="hidden md:flex items-center gap-2 pl-2 border-l border-slate-200">
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl">
+                <div className="w-6 h-6 rounded-lg bg-emerald-600 text-white flex items-center justify-center text-xs font-bold shrink-0">
+                  {displayName.charAt(0).toUpperCase()}
+                </div>
+                <div className="text-left">
+                  <p className="text-xs font-bold text-slate-800 leading-none">{displayName}</p>
+                  <p className="text-[10px] text-slate-400 leading-none font-mono mt-0.5">@{user}</p>
+                </div>
+                <button
+                  onClick={handleLogout}
+                  title="Trocar de perfil / Sair"
+                  className="p-1 hover:text-rose-600 text-slate-400 hover:bg-rose-50 rounded-md transition-colors ml-1"
+                >
+                  <LogOut size={14} />
+                </button>
+              </div>
+            </div>
           </div>
         </header>
 
@@ -1192,6 +1811,227 @@ export default function App() {
               </motion.div>
             )}
 
+            {activeTab === "loans" && (
+              <motion.div 
+                key="loans"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="space-y-8"
+              >
+                {(Object.entries(groupedLoans) as [string, Loan[]][]).map(([lender, bankLoans]) => {
+                  const lenderTotal = bankLoans.reduce((acc, l) => acc + l.totalAmount, 0);
+                  const lenderPaid = bankLoans.reduce((acc, l) => acc + (l.totalAmount * (l.installmentsPaid / l.totalInstallments)), 0);
+                  const lenderRemaining = lenderTotal - lenderPaid;
+
+                  return (
+                    <div key={lender} className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                      <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-slate-900 rounded-xl flex items-center justify-center text-white font-bold">
+                            {lender.charAt(0).toUpperCase()}
+                          </div>
+                          <div>
+                            <h3 className="font-bold text-slate-900 text-lg">{lender}</h3>
+                            <p className="text-xs text-slate-500">{bankLoans.length} empréstimos registrados</p>
+                          </div>
+                        </div>
+                        <div className="flex gap-4 md:gap-8">
+                          <div className="text-right">
+                            <p className="text-[10px] uppercase font-bold text-slate-400">Total Devido</p>
+                            <p className="text-sm font-bold text-slate-900">{formatCurrency(lenderRemaining)}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-[10px] uppercase font-bold text-slate-400">Total Pago</p>
+                            <p className="text-sm font-bold text-emerald-600">{formatCurrency(lenderPaid)}</p>
+                          </div>
+                          <button 
+                            onClick={() => addLoan(lender)}
+                            className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-lg text-xs font-bold hover:bg-slate-800 transition-all"
+                          >
+                            <Plus size={14} />
+                            <span>Novo Registro</span>
+                          </button>
+                          <button 
+                            onClick={() => deleteLender(lender)}
+                            className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                            title="Remover Seção"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </div>
+                      
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left">
+                          <thead>
+                            <tr className="bg-slate-50/50 border-b border-slate-200">
+                              <th className="px-6 py-4 font-semibold text-slate-600">Descrição</th>
+                              <th className="px-6 py-4 font-semibold text-slate-600">Vencimento</th>
+                              <th className="px-6 py-4 font-semibold text-slate-600 text-center">Parcelas</th>
+                              <th className="px-6 py-4 font-semibold text-slate-600">Valor Total</th>
+                              <th className="px-6 py-4 font-semibold text-slate-600">Valor Parcela</th>
+                              <th className="px-6 py-4 font-semibold text-slate-600 text-right">Ações</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {bankLoans.map(loan => {
+                              const installmentValue = loan.totalAmount / loan.totalInstallments;
+                              const installmentsLeft = loan.totalInstallments - loan.installmentsPaid;
+                              return (
+                                <tr key={loan.id} className="hover:bg-slate-50 transition-colors">
+                                  <td className="px-6 py-4">
+                                    <input 
+                                      type="text" 
+                                      value={loan.description}
+                                      onChange={(e) => updateLoan(loan.id, "description", e.target.value)}
+                                      className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-full font-medium"
+                                    />
+                                  </td>
+                                  <td className="px-6 py-4">
+                                    <div className="flex items-center gap-1">
+                                      <span className="text-slate-400 text-xs">Dia</span>
+                                      <input 
+                                        type="text" 
+                                        value={loan.dueDate}
+                                        onChange={(e) => updateLoan(loan.id, "dueDate", e.target.value)}
+                                        className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-10 text-center"
+                                      />
+                                    </div>
+                                  </td>
+                                  <td className="px-6 py-4">
+                                    <div className="flex items-center justify-center gap-2">
+                                      <input 
+                                        type="number" 
+                                        value={loan.installmentsPaid}
+                                        onChange={(e) => updateLoan(loan.id, "installmentsPaid", parseInt(e.target.value) || 0)}
+                                        className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-12 text-center font-bold text-emerald-600"
+                                      />
+                                      <span className="text-slate-400">/</span>
+                                      <input 
+                                        type="number" 
+                                        value={loan.totalInstallments}
+                                        onChange={(e) => updateLoan(loan.id, "totalInstallments", parseInt(e.target.value) || 1)}
+                                        className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-12 text-center"
+                                      />
+                                    </div>
+                                    <div className="text-[10px] text-center text-slate-400 mt-1">
+                                      {installmentsLeft} restantes
+                                    </div>
+                                  </td>
+                                  <td className="px-6 py-4">
+                                    <div className="flex items-center gap-1">
+                                      <span className="text-slate-400">R$</span>
+                                      <input 
+                                        type="number" 
+                                        value={loan.totalAmount}
+                                        onChange={(e) => updateLoan(loan.id, "totalAmount", parseFloat(e.target.value) || 0)}
+                                        className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-24 font-medium"
+                                      />
+                                    </div>
+                                  </td>
+                                  <td className="px-6 py-4 font-semibold text-slate-700">
+                                    {formatCurrency(installmentValue)}
+                                  </td>
+                                  <td className="px-6 py-4 text-right">
+                                    <div className="flex items-center justify-end gap-2">
+                                      <button 
+                                        onClick={() => {
+                                          const dueDate = parseInt(loan.dueDate) || 1;
+                                          const installmentsToGenerate = loan.totalInstallments - loan.installmentsPaid;
+                                          
+                                          if (installmentsToGenerate <= 0) return;
+                       
+                                          const newTransactions: Transaction[] = [];
+                                          for (let i = 0; i < installmentsToGenerate; i++) {
+                                            const installmentDate = addMonths(new Date(selectedYear, selectedMonth, dueDate), i);
+                                            newTransactions.push({
+                                              id: Math.random().toString(36).substr(2, 9),
+                                              date: format(installmentDate, "yyyy-MM-dd"),
+                                              description: `Parcela ${loan.installmentsPaid + i + 1}/${loan.totalInstallments} - ${loan.lender}`,
+                                              category: "Empréstimo",
+                                              amount: loan.totalAmount / loan.totalInstallments,
+                                              type: "expense",
+                                              paid: false
+                                            });
+                                          }
+                                          setTransactions(prev => [...newTransactions, ...prev]);
+                                        }}
+                                        className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-all group/btnAll relative"
+                                        title="Gerar todas as parcelas restantes"
+                                      >
+                                        <CalendarDays size={18} />
+                                        <span className="absolute -top-8 right-0 bg-slate-800 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover/btnAll:opacity-100 transition-opacity whitespace-nowrap">
+                                          Gerar Todas
+                                        </span>
+                                      </button>
+                                      <button 
+                                        onClick={() => {
+                                          const dueDate = parseInt(loan.dueDate) || 1;
+                                          const defaultDate = new Date(selectedYear, selectedMonth, dueDate);
+                                          const newTransaction: Transaction = {
+                                            id: Math.random().toString(36).substr(2, 9),
+                                            date: format(defaultDate, "yyyy-MM-dd"),
+                                            description: `Parcela ${loan.installmentsPaid + 1}/${loan.totalInstallments} - ${loan.lender}`,
+                                            category: "Empréstimo",
+                                            amount: loan.totalAmount / loan.totalInstallments,
+                                            type: "expense",
+                                            paid: true
+                                          };
+                                          setTransactions(prev => [newTransaction, ...prev]);
+                                        }}
+                                        className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all group/btn relative"
+                                        title="Lançar parcela no mês atual"
+                                      >
+                                        <Plus size={18} />
+                                        <span className="absolute -top-8 right-0 bg-slate-800 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover/btn:opacity-100 transition-opacity whitespace-nowrap">
+                                          Lançar Parcela
+                                        </span>
+                                      </button>
+                                      <button 
+                                        onClick={() => deleteLoan(loan.id)}
+                                        className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                                      >
+                                        <Trash2 size={18} />
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                            {bankLoans.length === 0 && (
+                              <tr>
+                                <td colSpan={6} className="px-6 py-10 text-center text-slate-400 italic text-sm">
+                                  Nenhum empréstimo registrado nesta instituição.
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {Object.keys(groupedLoans).length === 0 && (
+                  <div className="py-20 text-center space-y-4 bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200">
+                    <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center mx-auto shadow-sm">
+                      <HandCoins className="text-slate-300" size={32} />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-slate-900">Nenhum empréstimo registrado</h3>
+                      <p className="text-slate-500 text-sm">Adicione suas instituições para começar a organizar seus empréstimos.</p>
+                    </div>
+                    <button 
+                      onClick={addLender}
+                      className="text-emerald-600 font-bold text-sm hover:underline"
+                    >
+                      Adicionar primeiro empréstimo
+                    </button>
+                  </div>
+                )}
+              </motion.div>
+            )}
             {activeTab === "goals" && (
               <motion.div 
                 key="goals"
@@ -1507,6 +2347,12 @@ export default function App() {
                   />
                   <TutorialStep 
                     number="04"
+                    title="Controle seus Empréstimos"
+                    description="Gerencie dívidas e financiamentos na aba 'Empréstimos'. Registre o valor total e as parcelas para nunca perder o controle do que falta pagar."
+                    icon={<HandCoins className="text-indigo-500" />}
+                  />
+                  <TutorialStep 
+                    number="05"
                     title="Defina suas Metas"
                     description="Sonha com uma viagem ou reserva de emergência? Crie metas e acompanhe o progresso conforme você poupa dinheiro."
                     icon={<Target className="text-amber-500" />}
