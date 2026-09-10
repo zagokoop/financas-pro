@@ -39,7 +39,8 @@ import {
   LogIn,
   AlertCircle,
   ShieldCheck,
-  LogOut
+  LogOut,
+  Calendar
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
@@ -86,11 +87,145 @@ const EXPENSE_CATEGORIES = [
   "Investimentos", "Outros"
 ];
 
+const MAX_USERS_PER_DEVICE = 2;
+const MONTH_NAMES = [
+  "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+  "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
+];
+
+interface AmountInputProps {
+  id?: string;
+  value: number;
+  onChange: (value: number) => void;
+  className?: string;
+  placeholder?: string;
+  title?: string;
+}
+
+function AmountInput({
+  id,
+  value,
+  onChange,
+  className,
+  placeholder = "0,00",
+  title
+}: AmountInputProps) {
+  const [isFocused, setIsFocused] = useState(false);
+  const [localText, setLocalText] = useState(() => (value === 0 ? "" : String(value)));
+
+  useEffect(() => {
+    if (!isFocused) {
+      setLocalText(value === 0 ? "" : String(value));
+    }
+  }, [value, isFocused]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    let inputStr = e.target.value;
+
+    // Filter allowed characters: digits, comma, period
+    inputStr = inputStr.replace(/[^0-9.,]/g, "");
+
+    // Allow at most one comma or period
+    const parts = inputStr.split(/[.,]/);
+    if (parts.length > 2) {
+      inputStr = parts[0] + "." + parts.slice(1).join("");
+    }
+
+    // Strip leading zero if followed by a digit 1-9 (e.g., "05" -> "5", "0120" -> "120")
+    if (/^0+[1-9]/.test(inputStr)) {
+      inputStr = inputStr.replace(/^0+/, "");
+    }
+
+    // If multiple zeros like "00", keep just single "0"
+    if (/^0{2,}$/.test(inputStr)) {
+      inputStr = "0";
+    }
+
+    setLocalText(inputStr);
+
+    if (inputStr === "" || inputStr === "." || inputStr === ",") {
+      onChange(0);
+    } else {
+      const parsed = parseFloat(inputStr.replace(",", "."));
+      onChange(isNaN(parsed) ? 0 : parsed);
+    }
+  };
+
+  const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
+    setIsFocused(true);
+    setLocalText(value === 0 ? "" : String(value));
+    e.target.select();
+  };
+
+  const handleBlur = () => {
+    setIsFocused(false);
+    const cleaned = localText.trim().replace(",", ".");
+    if (cleaned === "" || isNaN(parseFloat(cleaned))) {
+      setLocalText("");
+      onChange(0);
+    } else {
+      const parsed = parseFloat(cleaned);
+      setLocalText(parsed === 0 ? "" : String(parsed));
+      onChange(parsed);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      const current = parseFloat(localText.replace(",", ".")) || 0;
+      const next = Math.round((current + 1) * 100) / 100;
+      setLocalText(String(next));
+      onChange(next);
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      const current = parseFloat(localText.replace(",", ".")) || 0;
+      const next = Math.max(0, Math.round((current - 1) * 100) / 100);
+      setLocalText(next === 0 ? "" : String(next));
+      onChange(next);
+    }
+  };
+
+  return (
+    <input
+      id={id}
+      type="text"
+      inputMode="decimal"
+      value={isFocused ? localText : (value === 0 ? "" : String(value))}
+      placeholder={placeholder}
+      onFocus={handleFocus}
+      onBlur={handleBlur}
+      onChange={handleChange}
+      onKeyDown={handleKeyDown}
+      className={className}
+      title={title}
+    />
+  );
+}
+
 export default function App() {
   const [user, setUser] = useState<string | null>(() => localStorage.getItem("financas_pro_current_user"));
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth());
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
+  const [selectedDay, setSelectedDay] = useState<number | "all">("all");
+
+  const daysInMonth = useMemo(() => {
+    return new Date(selectedYear, selectedMonth + 1, 0).getDate();
+  }, [selectedYear, selectedMonth]);
+
+  useEffect(() => {
+    if (selectedDay !== "all" && selectedDay > daysInMonth) {
+      setSelectedDay("all");
+    }
+  }, [daysInMonth, selectedDay]);
+
+  const handleGoToToday = () => {
+    const today = new Date();
+    setSelectedYear(today.getFullYear());
+    setSelectedMonth(today.getMonth());
+    setSelectedDay(today.getDate());
+  };
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [goals, setGoals] = useState<FinancialGoal[]>([]);
   const [cards, setCards] = useState<CreditCard[]>([]);
@@ -193,6 +328,12 @@ export default function App() {
     const cleanUsername = authUsername.trim().toLowerCase().replace(/\s+/g, "_");
     const cleanName = authName.trim();
     const cleanPassword = authPassword;
+
+    const currentUsersCount = Object.keys(accounts).length;
+    if (currentUsersCount >= MAX_USERS_PER_DEVICE && !accounts[cleanUsername]) {
+      setAuthError(`Limite máximo de ${MAX_USERS_PER_DEVICE} usuários por dispositivo atingido. Para cadastrar um novo usuário, remova um dos perfis salvos neste aparelho.`);
+      return;
+    }
 
     if (!cleanName) {
       setAuthError("Por favor, preencha o seu nome completo ou como deseja ser chamado.");
@@ -388,10 +529,15 @@ export default function App() {
     document.body.removeChild(link);
   };
   const totals = useMemo(() => {
-    const filtered = transactions.filter(t => {
+    const monthFiltered = transactions.filter(t => {
       const date = parseISO(t.date);
       return date.getMonth() === selectedMonth && date.getFullYear() === selectedYear;
     });
+
+    const filtered = selectedDay === "all"
+      ? monthFiltered
+      : monthFiltered.filter(t => parseISO(t.date).getDate() === selectedDay);
+
     const income = filtered
       .filter(t => t.type === "income")
       .reduce((acc, t) => acc + t.amount, 0);
@@ -403,13 +549,22 @@ export default function App() {
       .reduce((acc, t) => acc + t.amount, 0);
     const pendingExpense = expense - paidExpense;
     const savingsRate = income > 0 ? ((income - expense) / income) * 100 : 0;
+
+    // Monthly cumulative totals for reference and comparison
+    const monthIncome = monthFiltered
+      .filter(t => t.type === "income")
+      .reduce((acc, t) => acc + t.amount, 0);
+    const monthExpense = monthFiltered
+      .filter(t => t.type === "expense")
+      .reduce((acc, t) => acc + t.amount, 0);
+    const monthPaidExpense = monthFiltered
+      .filter(t => t.type === "expense" && t.paid)
+      .reduce((acc, t) => acc + t.amount, 0);
     
     const budgetAdherence = Object.keys(budgets).length > 0 
       ? ((Object.entries(budgets) as [string, number][]).filter(([cat, limit]) => {
-          const spent = transactions
-            .filter(t => t.category === cat && t.type === "expense" && 
-                    parseISO(t.date).getMonth() === selectedMonth && 
-                    parseISO(t.date).getFullYear() === selectedYear)
+          const spent = monthFiltered
+            .filter(t => t.category === cat && t.type === "expense")
             .reduce((acc, t) => acc + t.amount, 0);
           return spent <= limit;
         }).length / Object.keys(budgets).length) * 100
@@ -417,8 +572,20 @@ export default function App() {
 
     const healthScore = Math.min(100, Math.max(0, (savingsRate * 0.6) + (budgetAdherence * 0.4)));
 
-    return { income, expense, paidExpense, pendingExpense, balance: income - expense, savingsRate, healthScore };
-  }, [transactions, selectedMonth, selectedYear, budgets]);
+    return { 
+      income, 
+      expense, 
+      paidExpense, 
+      pendingExpense, 
+      balance: income - expense, 
+      savingsRate, 
+      healthScore,
+      monthIncome,
+      monthExpense,
+      monthPaidExpense,
+      monthBalance: monthIncome - monthExpense
+    };
+  }, [transactions, selectedMonth, selectedYear, selectedDay, budgets]);
 
   // Derived Goals with automatic progress from transactions
   const goalsWithProgress = useMemo(() => {
@@ -511,10 +678,17 @@ export default function App() {
   const COLORS = ["#10b981", "#ef4444", "#3b82f6", "#f59e0b", "#8b5cf6", "#ec4899"];
 
   const addTransaction = (type: "income" | "expense") => {
-    const defaultDate = new Date(selectedYear, selectedMonth, 1);
+    const today = new Date();
+    let dayToUse = 1;
+    if (selectedDay !== "all") {
+      dayToUse = Math.min(selectedDay, daysInMonth);
+    } else if (today.getMonth() === selectedMonth && today.getFullYear() === selectedYear) {
+      dayToUse = today.getDate();
+    }
+    const targetDate = new Date(selectedYear, selectedMonth, dayToUse);
     const newTransaction: Transaction = {
       id: Math.random().toString(36).substr(2, 9),
-      date: format(defaultDate, "yyyy-MM-dd"),
+      date: format(targetDate, "yyyy-MM-dd"),
       description: "Nova " + (type === "income" ? "Entrada" : "Saída"),
       category: type === "income" ? INCOME_CATEGORIES[0] : EXPENSE_CATEGORIES[0],
       amount: 0,
@@ -688,6 +862,7 @@ export default function App() {
 
   if (!user) {
     const savedAccountList: UserAccount[] = Object.values(accounts);
+    const isUserLimitReached = savedAccountList.length >= MAX_USERS_PER_DEVICE;
 
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 sm:p-6 font-sans relative overflow-hidden">
@@ -742,7 +917,7 @@ export default function App() {
                   setAuthSuccess(null);
                 }}
                 className={cn(
-                  "flex-1 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all",
+                  "flex-1 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 transition-all",
                   authMode === "register"
                     ? "bg-white text-slate-900 shadow-sm"
                     : "text-slate-500 hover:text-slate-900"
@@ -750,6 +925,14 @@ export default function App() {
               >
                 <UserPlus size={16} />
                 <span>Criar Perfil</span>
+                <span className={cn(
+                  "text-[10px] px-1.5 py-0.5 rounded font-bold ml-0.5",
+                  isUserLimitReached 
+                    ? "bg-amber-100 text-amber-800" 
+                    : "bg-slate-200 text-slate-700"
+                )}>
+                  {savedAccountList.length}/{MAX_USERS_PER_DEVICE}
+                </span>
               </button>
             </div>
           </div>
@@ -779,7 +962,41 @@ export default function App() {
             )}
 
             {authMode === "register" ? (
-              <form onSubmit={handleRegister} className="space-y-4">
+              isUserLimitReached ? (
+                <div className="space-y-4 py-2">
+                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-amber-900 space-y-2.5 text-xs">
+                    <div className="flex items-center gap-2 font-bold text-amber-900 text-sm">
+                      <AlertCircle size={18} className="text-amber-600 shrink-0" />
+                      <span>Limite de 2 Usuários Atingido</span>
+                    </div>
+                    <p className="leading-relaxed">
+                      Este aparelho já atingiu o limite de <strong>{MAX_USERS_PER_DEVICE} perfis cadastrados</strong>.
+                    </p>
+                    <p className="leading-relaxed text-amber-800">
+                      Para criar uma nova conta, remova um dos perfis salvos na lista abaixo usando o botão de lixeira.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMode("login");
+                      setAuthError(null);
+                    }}
+                    className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-sm shadow-md shadow-emerald-600/20 transition-all flex items-center justify-center gap-2"
+                  >
+                    <LogIn size={18} />
+                    <span>Acessar Perfis Cadastrados</span>
+                  </button>
+                </div>
+              ) : (
+                <form onSubmit={handleRegister} className="space-y-4">
+                  <div className="p-2.5 bg-emerald-50/80 border border-emerald-200/80 rounded-xl text-xs text-emerald-850 flex items-center justify-between">
+                    <span className="text-emerald-800">Vagas neste dispositivo:</span>
+                    <span className="font-bold bg-emerald-100 text-emerald-900 px-2 py-0.5 rounded-md">
+                      {savedAccountList.length} de {MAX_USERS_PER_DEVICE} contas
+                    </span>
+                  </div>
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-slate-700 ml-1 flex items-center gap-1.5">
                     <User size={14} className="text-slate-400" />
@@ -868,6 +1085,7 @@ export default function App() {
                   <span>Criar Perfil e Entrar</span>
                 </button>
               </form>
+              )
             ) : (
               <form onSubmit={handleLogin} className="space-y-4">
                 <div className="space-y-1.5">
@@ -958,9 +1176,19 @@ export default function App() {
             {/* Saved Accounts on this Device */}
             {savedAccountList.length > 0 && (
               <div className="pt-4 border-t border-slate-100 space-y-2.5">
-                <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                  Perfis salvos neste dispositivo:
-                </p>
+                <div className="flex items-center justify-between">
+                  <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                    Perfis salvos neste dispositivo:
+                  </p>
+                  <span className={cn(
+                    "text-[10px] font-bold px-2 py-0.5 rounded-full border",
+                    isUserLimitReached
+                      ? "bg-amber-50 text-amber-700 border-amber-200"
+                      : "bg-slate-100 text-slate-600 border-slate-200"
+                  )}>
+                    {savedAccountList.length}/{MAX_USERS_PER_DEVICE} {isUserLimitReached ? "(Limite)" : "perfis"}
+                  </span>
+                </div>
                 <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
                   {savedAccountList.map((acc) => (
                     <div 
@@ -1201,14 +1429,34 @@ export default function App() {
           </div>
           <div className="flex flex-wrap gap-2 w-full sm:w-auto">
             {(activeTab === "dashboard" || activeTab === "incomes" || activeTab === "expenses" || activeTab === "annual") && (
-              <div className="flex gap-2 w-full sm:w-auto">
+              <div className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto">
+                {activeTab !== "annual" && (
+                  <select 
+                    value={selectedDay}
+                    onChange={(e) => setSelectedDay(e.target.value === "all" ? "all" : parseInt(e.target.value))}
+                    className={cn(
+                      "border rounded-lg px-2.5 py-2 text-sm font-medium focus:ring-2 focus:ring-emerald-500 outline-none transition-colors",
+                      selectedDay !== "all" 
+                        ? "bg-emerald-50 border-emerald-300 text-emerald-900 font-bold" 
+                        : "bg-white border-slate-200 text-slate-700"
+                    )}
+                    title="Filtrar por Dia específico"
+                  >
+                    <option value="all">Mês Todo (Todos os dias)</option>
+                    {Array.from({ length: daysInMonth }, (_, i) => i + 1).map((d) => (
+                      <option key={d} value={d}>
+                        Dia {String(d).padStart(2, "0")}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 {activeTab !== "annual" && (
                   <select 
                     value={selectedMonth}
                     onChange={(e) => setSelectedMonth(parseInt(e.target.value))}
                     className="bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
                   >
-                    {["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"].map((m, i) => (
+                    {MONTH_NAMES.map((m, i) => (
                       <option key={i} value={i}>{m}</option>
                     ))}
                   </select>
@@ -1222,6 +1470,16 @@ export default function App() {
                     <option key={y} value={y}>{y}</option>
                   ))}
                 </select>
+                {activeTab !== "annual" && (
+                  <button
+                    onClick={handleGoToToday}
+                    title="Ir para a data de hoje"
+                    className="px-2.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-bold transition-all flex items-center gap-1 active:scale-95"
+                  >
+                    <Calendar size={14} className="text-emerald-600" />
+                    <span className="hidden sm:inline">Hoje</span>
+                  </button>
+                )}
               </div>
             )}
             <div className="hidden md:flex gap-2">
@@ -1280,7 +1538,17 @@ export default function App() {
                   className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium shadow-sm transition-all"
                 >
                   <Plus size={18} />
-                  <span>{activeTab === "cards" ? "Novo Cartão" : activeTab === "loans" ? "Novo Empréstimo" : "Novo Registro"}</span>
+                  <span>
+                    {activeTab === "cards" 
+                      ? "Novo Cartão" 
+                      : activeTab === "loans" 
+                        ? "Novo Empréstimo" 
+                        : activeTab === "incomes" 
+                          ? (selectedDay !== "all" ? `Entrada (Dia ${selectedDay})` : "Nova Entrada")
+                          : activeTab === "expenses"
+                            ? (selectedDay !== "all" ? `Saída (Dia ${selectedDay})` : "Nova Saída")
+                            : "Novo Registro"}
+                  </span>
                 </button>
               </div>
             )}
@@ -1317,38 +1585,85 @@ export default function App() {
                 exit={{ opacity: 0, y: -20 }}
                 className="space-y-6 md:space-y-8"
               >
+                {/* Daily Filter Indicator Banner */}
+                {selectedDay !== "all" && (
+                  <div className="bg-emerald-50 border border-emerald-200/90 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 bg-emerald-600 text-white rounded-xl shrink-0 shadow-sm">
+                        <Calendar size={20} />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-bold text-emerald-800 bg-emerald-200/70 px-2 py-0.5 rounded uppercase tracking-wide">
+                            Filtro Diário Ativo
+                          </span>
+                          <span className="text-xs text-emerald-950 font-bold">
+                            Dia {String(selectedDay).padStart(2, "0")} de {MONTH_NAMES[selectedMonth]} de {selectedYear}
+                          </span>
+                        </div>
+                        <p className="text-xs text-emerald-850 mt-1">
+                          Entradas do dia: <strong>{formatCurrency(totals.income)}</strong> • Saídas do dia: <strong>{formatCurrency(totals.expense)}</strong> • Saldo do dia: <strong className={totals.balance >= 0 ? "text-emerald-700" : "text-rose-700"}>{formatCurrency(totals.balance)}</strong>
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setSelectedDay("all")}
+                      className="px-3.5 py-1.5 bg-white hover:bg-emerald-100/60 border border-emerald-300 text-emerald-800 rounded-xl text-xs font-bold transition-all whitespace-nowrap shadow-sm"
+                    >
+                      Ver Mês Inteiro
+                    </button>
+                  </div>
+                )}
+
                 {/* Summary Cards */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 md:gap-6">
                   <SummaryCard 
-                    title={`Receita em ${["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"][selectedMonth]}`} 
+                    title={selectedDay === "all" ? `Receita em ${MONTH_NAMES[selectedMonth]}` : `Receita no Dia ${String(selectedDay).padStart(2, "0")}/${String(selectedMonth + 1).padStart(2, "0")}`} 
                     value={totals.income} 
                     icon={<TrendingUp className="text-emerald-600" />} 
                     color="emerald"
+                    extraInfo={selectedDay !== "all" ? (
+                      <div className="text-[10px] text-slate-500 font-medium">
+                        Total do mês: {formatCurrency(totals.monthIncome)}
+                      </div>
+                    ) : undefined}
                   />
                   <SummaryCard 
-                    title={`Despesas em ${["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"][selectedMonth]}`} 
+                    title={selectedDay === "all" ? `Despesas em ${MONTH_NAMES[selectedMonth]}` : `Despesas no Dia ${String(selectedDay).padStart(2, "0")}/${String(selectedMonth + 1).padStart(2, "0")}`} 
                     value={totals.expense} 
                     icon={<TrendingDown className="text-rose-600" />} 
                     color="rose"
                     extraInfo={
-                      <div className="flex justify-between text-[10px] md:text-xs">
-                        <div className="flex items-center gap-1 text-emerald-600 font-medium">
-                          <CheckCircle2 size={12} />
-                          <span>Pago: {formatCurrency(totals.paidExpense)}</span>
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-[10px] md:text-xs">
+                          <div className="flex items-center gap-1 text-emerald-600 font-medium">
+                            <CheckCircle2 size={12} />
+                            <span>Pago: {formatCurrency(totals.paidExpense)}</span>
+                          </div>
+                          <div className="flex items-center gap-1 text-amber-600 font-medium">
+                            <Circle size={12} />
+                            <span>Pendente: {formatCurrency(totals.pendingExpense)}</span>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-1 text-amber-600 font-medium">
-                          <Circle size={12} />
-                          <span>Pendente: {formatCurrency(totals.pendingExpense)}</span>
-                        </div>
+                        {selectedDay !== "all" && (
+                          <div className="text-[10px] text-slate-400 font-medium">
+                            Total do mês: {formatCurrency(totals.monthExpense)}
+                          </div>
+                        )}
                       </div>
                     }
                   />
                   <SummaryCard 
-                    title="Saldo do Mês" 
+                    title={selectedDay === "all" ? "Saldo do Mês" : `Saldo no Dia ${String(selectedDay).padStart(2, "0")}`} 
                     value={totals.balance} 
                     icon={<LayoutDashboard className="text-blue-600" />} 
                     color={totals.balance >= 0 ? "blue" : "rose"}
                     showIndicator
+                    extraInfo={selectedDay !== "all" ? (
+                      <div className="text-[10px] text-slate-500 font-medium">
+                        Saldo do mês: {formatCurrency(totals.monthBalance)}
+                      </div>
+                    ) : undefined}
                   />
                   <SummaryCard 
                     title="Taxa de Poupança" 
@@ -1438,49 +1753,178 @@ export default function App() {
               </motion.div>
             )}
 
-            {(activeTab === "incomes" || activeTab === "expenses") && (
-              <motion.div 
-                key={activeTab}
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-                className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden"
-              >
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left">
-                        <thead>
-                          <tr className="bg-slate-50 border-b border-slate-200">
-                            <th className="px-6 py-4 font-semibold text-slate-600">Data</th>
-                            <th className="px-6 py-4 font-semibold text-slate-600">Descrição</th>
-                            <th className="px-6 py-4 font-semibold text-slate-600">Categoria</th>
-                            <th className="px-6 py-4 font-semibold text-slate-600">Valor</th>
-                            {activeTab === "expenses" && (
-                              <th className="px-6 py-4 font-semibold text-slate-600 text-center">Status</th>
-                            )}
-                            <th className="px-6 py-4 font-semibold text-slate-600 text-right">Ações</th>
-                          </tr>
-                        </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {transactions
-                        .filter(t => {
-                          const date = parseISO(t.date);
-                          const matchesSearch = t.description.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                                               t.category.toLowerCase().includes(searchTerm.toLowerCase());
+            {(activeTab === "incomes" || activeTab === "expenses") && (() => {
+              const isIncomeTab = activeTab === "incomes";
+              const currentMonthTransactions = transactions.filter(t => {
+                const date = parseISO(t.date);
+                return (
+                  t.type === (isIncomeTab ? "income" : "expense") &&
+                  date.getMonth() === selectedMonth &&
+                  date.getFullYear() === selectedYear
+                );
+              });
+
+              // Map of transactions per day in the month
+              const dayTransactionCounts: Record<number, number> = {};
+              currentMonthTransactions.forEach(t => {
+                const d = parseISO(t.date).getDate();
+                dayTransactionCounts[d] = (dayTransactionCounts[d] || 0) + 1;
+              });
+
+              const filteredTransactions = currentMonthTransactions.filter(t => {
+                const date = parseISO(t.date);
+                const matchesSearch = t.description.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                                     t.category.toLowerCase().includes(searchTerm.toLowerCase());
+                const matchesDay = selectedDay === "all" || date.getDate() === selectedDay;
+                return matchesDay && matchesSearch;
+              });
+
+              const totalAmount = filteredTransactions.reduce((acc, t) => acc + t.amount, 0);
+
+              return (
+                <motion.div 
+                  key={activeTab}
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden"
+                >
+                  {/* Top Bar for Incomes/Expenses with Day Selector */}
+                  <div className="p-4 md:p-5 border-b border-slate-100 space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h2 className="text-base md:text-lg font-bold text-slate-900">
+                            {selectedDay === "all" 
+                              ? `${isIncomeTab ? "Entradas" : "Saídas"} de ${MONTH_NAMES[selectedMonth]} de ${selectedYear}`
+                              : `${isIncomeTab ? "Entradas" : "Saídas"} do Dia ${String(selectedDay).padStart(2, "0")} de ${MONTH_NAMES[selectedMonth]}`
+                            }
+                          </h2>
+                          <span className={cn(
+                            "px-2.5 py-0.5 rounded-full text-xs font-bold",
+                            isIncomeTab ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"
+                          )}>
+                            Total: {formatCurrency(totalAmount)}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          {selectedDay === "all"
+                            ? `Exibindo todos os lançamentos do mês (${filteredTransactions.length} registros)`
+                            : `Filtrado especificamente para o dia ${String(selectedDay).padStart(2, "0")}/${String(selectedMonth + 1).padStart(2, "0")} (${filteredTransactions.length} registros)`
+                          }
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {selectedDay !== "all" && (
+                          <button
+                            onClick={() => setSelectedDay("all")}
+                            className="text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg transition-colors"
+                          >
+                            Ver Mês Completo
+                          </button>
+                        )}
+                        <button
+                          onClick={() => addTransaction(isIncomeTab ? "income" : "expense")}
+                          className={cn(
+                            "flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold text-white shadow-sm transition-all",
+                            isIncomeTab ? "bg-emerald-600 hover:bg-emerald-700" : "bg-rose-600 hover:bg-rose-700"
+                          )}
+                        >
+                          <Plus size={15} />
+                          <span>Adicionar {isIncomeTab ? "Entrada" : "Saída"}</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Day-by-Day Selector Strip */}
+                    <div className="pt-2 border-t border-slate-100">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                          <Calendar size={13} className="text-slate-400" />
+                          <span>Navegar pelos Dias de {MONTH_NAMES[selectedMonth]}:</span>
+                        </span>
+                        {selectedDay !== "all" && (
+                          <span className="text-[11px] font-bold text-emerald-600">
+                            Dia {String(selectedDay).padStart(2, "0")} selecionado
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-1.5 overflow-x-auto pb-1.5 scrollbar-thin">
+                        <button
+                          onClick={() => setSelectedDay("all")}
+                          className={cn(
+                            "px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 transition-all border",
+                            selectedDay === "all"
+                              ? "bg-slate-900 text-white border-slate-900 shadow-sm"
+                              : "bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200"
+                          )}
+                        >
+                          Mês Todo
+                        </button>
+
+                        {Array.from({ length: daysInMonth }, (_, i) => i + 1).map((dayNumber) => {
+                          const count = dayTransactionCounts[dayNumber] || 0;
+                          const isSelected = selectedDay === dayNumber;
                           return (
-                            t.type === (activeTab === "incomes" ? "income" : "expense") &&
-                            date.getMonth() === selectedMonth &&
-                            date.getFullYear() === selectedYear &&
-                            matchesSearch
+                            <button
+                              key={dayNumber}
+                              onClick={() => setSelectedDay(isSelected ? "all" : dayNumber)}
+                              className={cn(
+                                "flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold shrink-0 transition-all border relative",
+                                isSelected
+                                  ? (isIncomeTab 
+                                      ? "bg-emerald-600 text-white border-emerald-600 shadow-sm" 
+                                      : "bg-rose-600 text-white border-rose-600 shadow-sm")
+                                  : count > 0
+                                    ? "bg-slate-100 text-slate-800 border-slate-300 hover:border-slate-400"
+                                    : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                              )}
+                              title={`Dia ${dayNumber}: ${count} ${count === 1 ? "registro" : "registros"}`}
+                            >
+                              <span>{String(dayNumber).padStart(2, "0")}</span>
+                              {count > 0 && (
+                                <span className={cn(
+                                  "text-[10px] w-4 h-4 rounded-full flex items-center justify-center font-bold",
+                                  isSelected
+                                    ? "bg-white/25 text-white"
+                                    : (isIncomeTab ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800")
+                                )}>
+                                  {count}
+                                </span>
+                              )}
+                            </button>
                           );
-                        })
-                        .map(transaction => (
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Transactions Table */}
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200">
+                          <th className="px-6 py-4 font-semibold text-slate-600">Data</th>
+                          <th className="px-6 py-4 font-semibold text-slate-600">Descrição</th>
+                          <th className="px-6 py-4 font-semibold text-slate-600">Categoria</th>
+                          <th className="px-6 py-4 font-semibold text-slate-600">Valor</th>
+                          {activeTab === "expenses" && (
+                            <th className="px-6 py-4 font-semibold text-slate-600 text-center">Status</th>
+                          )}
+                          <th className="px-6 py-4 font-semibold text-slate-600 text-right">Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {filteredTransactions.map(transaction => (
                           <tr key={transaction.id} className="hover:bg-slate-50 transition-colors">
                             <td className="px-6 py-4">
                               <input 
                                 type="date" 
                                 value={transaction.date}
                                 onChange={(e) => updateTransaction(transaction.id, "date", e.target.value)}
-                                className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1"
+                                className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 font-medium text-slate-700"
                               />
                             </td>
                             <td className="px-6 py-4">
@@ -1488,7 +1932,7 @@ export default function App() {
                                 type="text" 
                                 value={transaction.description}
                                 onChange={(e) => updateTransaction(transaction.id, "description", e.target.value)}
-                                className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-full"
+                                className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-full font-medium"
                               />
                             </td>
                             <td className="px-6 py-4">
@@ -1508,7 +1952,7 @@ export default function App() {
                                     }
                                   }
                                 }}
-                                className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1"
+                                className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 text-slate-700"
                               >
                                 {activeTab === "incomes" ? (
                                   INCOME_CATEGORIES.map(cat => <option key={cat} value={cat}>{cat}</option>)
@@ -1529,13 +1973,13 @@ export default function App() {
                             </td>
                             <td className="px-6 py-4">
                               <div className="flex items-center gap-1">
-                                <span className="text-slate-400">R$</span>
-                                <input 
-                                  type="number" 
+                                <span className="text-slate-400 font-semibold">R$</span>
+                                <AmountInput 
                                   value={transaction.amount}
-                                  onChange={(e) => updateTransaction(transaction.id, "amount", parseFloat(e.target.value) || 0)}
+                                  onChange={(val) => updateTransaction(transaction.id, "amount", val)}
+                                  placeholder="0,00"
                                   className={cn(
-                                    "bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-24 font-bold",
+                                    "bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-24 font-bold outline-none",
                                     transaction.paid ? "text-slate-400 line-through" : (
                                       transaction.type === "income" ? "text-emerald-600" : (
                                         transaction.amount > 1000 ? "text-rose-700 underline decoration-rose-300 underline-offset-4" : "text-rose-600"
@@ -1575,17 +2019,57 @@ export default function App() {
                               <button 
                                 onClick={() => deleteTransaction(transaction.id)}
                                 className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                                title="Excluir lançamento"
                               >
                                 <Trash2 size={18} />
                               </button>
                             </td>
                           </tr>
                         ))}
-                    </tbody>
-                  </table>
-                </div>
-              </motion.div>
-            )}
+
+                        {filteredTransactions.length === 0 && (
+                          <tr>
+                            <td colSpan={activeTab === "expenses" ? 6 : 5} className="px-6 py-12 text-center">
+                              <div className="max-w-xs mx-auto space-y-3">
+                                <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center mx-auto text-slate-400">
+                                  <Calendar size={20} />
+                                </div>
+                                <p className="text-sm font-semibold text-slate-700">
+                                  Nenhum registro {selectedDay !== "all" ? `no Dia ${String(selectedDay).padStart(2, "0")} de ${MONTH_NAMES[selectedMonth]}` : `em ${MONTH_NAMES[selectedMonth]}`}
+                                </p>
+                                <p className="text-xs text-slate-400">
+                                  Adicione uma {isIncomeTab ? "entrada" : "saída"} para acompanhar suas finanças neste dia.
+                                </p>
+                                <div className="flex items-center justify-center gap-2 pt-1">
+                                  <button
+                                    onClick={() => addTransaction(isIncomeTab ? "income" : "expense")}
+                                    className={cn(
+                                      "px-3.5 py-2 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-1.5",
+                                      isIncomeTab ? "bg-emerald-600 hover:bg-emerald-700" : "bg-rose-600 hover:bg-rose-700"
+                                    )}
+                                  >
+                                    <Plus size={14} />
+                                    <span>Adicionar {isIncomeTab ? "Entrada" : "Saída"}</span>
+                                  </button>
+                                  {selectedDay !== "all" && (
+                                    <button
+                                      onClick={() => setSelectedDay("all")}
+                                      className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all"
+                                    >
+                                      Ver Mês Todo
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </motion.div>
+              );
+            })()}
 
             {activeTab === "cards" && (
               <motion.div 
@@ -1679,16 +2163,26 @@ export default function App() {
                                     <div className="flex items-center justify-center gap-2">
                                       <input 
                                         type="number" 
-                                        value={card.installmentsPaid}
-                                        onChange={(e) => updateCard(card.id, "installmentsPaid", parseInt(e.target.value) || 0)}
-                                        className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-12 text-center font-bold text-emerald-600"
+                                        value={card.installmentsPaid === 0 ? "" : card.installmentsPaid}
+                                        placeholder="0"
+                                        onFocus={(e) => e.target.select()}
+                                        onChange={(e) => {
+                                          const val = e.target.value.replace(/^0+(?=\d)/, "");
+                                          updateCard(card.id, "installmentsPaid", parseInt(val) || 0);
+                                        }}
+                                        className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-12 text-center font-bold text-emerald-600 outline-none"
                                       />
                                       <span className="text-slate-400">/</span>
                                       <input 
                                         type="number" 
-                                        value={card.totalInstallments}
-                                        onChange={(e) => updateCard(card.id, "totalInstallments", parseInt(e.target.value) || 1)}
-                                        className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-12 text-center"
+                                        value={card.totalInstallments === 0 ? "" : card.totalInstallments}
+                                        placeholder="1"
+                                        onFocus={(e) => e.target.select()}
+                                        onChange={(e) => {
+                                          const val = e.target.value.replace(/^0+(?=\d)/, "");
+                                          updateCard(card.id, "totalInstallments", parseInt(val) || 1);
+                                        }}
+                                        className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-12 text-center outline-none"
                                       />
                                     </div>
                                     <div className="text-[10px] text-center text-slate-400 mt-1">
@@ -1697,12 +2191,12 @@ export default function App() {
                                   </td>
                                   <td className="px-6 py-4">
                                     <div className="flex items-center gap-1">
-                                      <span className="text-slate-400">R$</span>
-                                      <input 
-                                        type="number" 
+                                      <span className="text-slate-400 font-semibold">R$</span>
+                                      <AmountInput 
                                         value={card.totalAmount}
-                                        onChange={(e) => updateCard(card.id, "totalAmount", parseFloat(e.target.value) || 0)}
-                                        className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-24 font-medium"
+                                        onChange={(val) => updateCard(card.id, "totalAmount", val)}
+                                        placeholder="0,00"
+                                        className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-24 font-medium outline-none text-slate-800"
                                       />
                                     </div>
                                   </td>
@@ -1903,16 +2397,26 @@ export default function App() {
                                     <div className="flex items-center justify-center gap-2">
                                       <input 
                                         type="number" 
-                                        value={loan.installmentsPaid}
-                                        onChange={(e) => updateLoan(loan.id, "installmentsPaid", parseInt(e.target.value) || 0)}
-                                        className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-12 text-center font-bold text-emerald-600"
+                                        value={loan.installmentsPaid === 0 ? "" : loan.installmentsPaid}
+                                        placeholder="0"
+                                        onFocus={(e) => e.target.select()}
+                                        onChange={(e) => {
+                                          const val = e.target.value.replace(/^0+(?=\d)/, "");
+                                          updateLoan(loan.id, "installmentsPaid", parseInt(val) || 0);
+                                        }}
+                                        className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-12 text-center font-bold text-emerald-600 outline-none"
                                       />
                                       <span className="text-slate-400">/</span>
                                       <input 
                                         type="number" 
-                                        value={loan.totalInstallments}
-                                        onChange={(e) => updateLoan(loan.id, "totalInstallments", parseInt(e.target.value) || 1)}
-                                        className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-12 text-center"
+                                        value={loan.totalInstallments === 0 ? "" : loan.totalInstallments}
+                                        placeholder="1"
+                                        onFocus={(e) => e.target.select()}
+                                        onChange={(e) => {
+                                          const val = e.target.value.replace(/^0+(?=\d)/, "");
+                                          updateLoan(loan.id, "totalInstallments", parseInt(val) || 1);
+                                        }}
+                                        className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-12 text-center outline-none"
                                       />
                                     </div>
                                     <div className="text-[10px] text-center text-slate-400 mt-1">
@@ -1921,12 +2425,12 @@ export default function App() {
                                   </td>
                                   <td className="px-6 py-4">
                                     <div className="flex items-center gap-1">
-                                      <span className="text-slate-400">R$</span>
-                                      <input 
-                                        type="number" 
+                                      <span className="text-slate-400 font-semibold">R$</span>
+                                      <AmountInput 
                                         value={loan.totalAmount}
-                                        onChange={(e) => updateLoan(loan.id, "totalAmount", parseFloat(e.target.value) || 0)}
-                                        className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-24 font-medium"
+                                        onChange={(val) => updateLoan(loan.id, "totalAmount", val)}
+                                        placeholder="0,00"
+                                        className="bg-transparent border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 w-24 font-medium outline-none text-slate-800"
                                       />
                                     </div>
                                   </td>
@@ -2070,11 +2574,11 @@ export default function App() {
                         <div className="grid grid-cols-2 gap-4">
                           <div className="space-y-1">
                             <label className="text-[10px] uppercase font-bold text-slate-400 ml-1">Meta (R$)</label>
-                            <input 
-                              type="number" 
+                            <AmountInput 
                               value={goal.targetAmount}
-                              onChange={(e) => updateGoal(goal.id, "targetAmount", parseFloat(e.target.value) || 0)}
-                              className="w-full bg-slate-50 border-none focus:ring-2 focus:ring-emerald-500 rounded-lg px-3 py-2 text-sm font-semibold"
+                              onChange={(val) => updateGoal(goal.id, "targetAmount", val)}
+                              placeholder="0,00"
+                              className="w-full bg-slate-50 border-none focus:ring-2 focus:ring-emerald-500 rounded-lg px-3 py-2 text-sm font-semibold outline-none text-slate-800"
                             />
                           </div>
                           <div className="space-y-1">
@@ -2180,14 +2684,15 @@ export default function App() {
                       </div>
 
                       <div className="space-y-2">
-                        <div className="flex justify-between text-sm">
+                        <div className="flex justify-between items-center text-sm">
                           <span className="text-slate-500">Gasto: <span className="font-bold text-slate-900">{formatCurrency(spent)}</span></span>
-                          <span className="text-slate-500">Limite: 
-                            <input 
-                              type="number" 
+                          <span className="text-slate-500 flex items-center">
+                            Limite: R$ 
+                            <AmountInput 
                               value={limit}
-                              onChange={(e) => setBudgets(prev => ({ ...prev, [category]: parseFloat(e.target.value) || 0 }))}
-                              className="w-20 ml-1 bg-slate-50 border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 font-bold text-slate-900"
+                              onChange={(val) => setBudgets(prev => ({ ...prev, [category]: val }))}
+                              placeholder="0,00"
+                              className="w-24 ml-1.5 bg-slate-50 border-none focus:ring-2 focus:ring-emerald-500 rounded px-1 font-bold text-slate-900 outline-none"
                             />
                           </span>
                         </div>
@@ -2356,6 +2861,12 @@ export default function App() {
                     title="Defina suas Metas"
                     description="Sonha com uma viagem ou reserva de emergência? Crie metas e acompanhe o progresso conforme você poupa dinheiro."
                     icon={<Target className="text-amber-500" />}
+                  />
+                  <TutorialStep 
+                    number="06"
+                    title="Lançamentos por Dia e 2 Perfis"
+                    description="Escolha qualquer dia do mês para ver e lançar entradas e saídas diárias. Este dispositivo permite até 2 perfis com senhas e dados 100% independentes."
+                    icon={<Calendar className="text-cyan-500" />}
                   />
                 </div>
 
